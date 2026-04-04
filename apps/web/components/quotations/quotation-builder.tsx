@@ -11,6 +11,7 @@ import {
   useQuotations,
   useServiceTemplates,
   useQuotationTemplate,
+  useReusableTextBlocks,
   useSpecialConsiderationCatalog,
   useUpdatePricingProfiles,
   useUpdateQuotationFromBuilder,
@@ -46,6 +47,9 @@ type SummaryItem = {
   priceInput: string;
   basePrice: number;
   priceOverridden: boolean;
+  isOptional?: boolean;
+  optionGroup?: string;
+  optionLabel?: string;
 };
 
 type CommercialSection = {
@@ -270,6 +274,18 @@ function compareWorkItemCodes(left: SummaryItem, right: SummaryItem) {
   return left.code.localeCompare(right.code, 'es', { numeric: true, sensitivity: 'base' });
 }
 
+function deriveAutoWorkItemsFromSeed(items: Array<Pick<SummaryItem, 'code' | 'relatedWork'>>) {
+  const orderedConcepts = [...items].sort((left, right) =>
+    left.code.localeCompare(right.code, 'es', { numeric: true, sensitivity: 'base' }),
+  );
+  const orderedLines = orderedConcepts.flatMap((item) => splitWorkItems(item.relatedWork || ''));
+  return orderWorkItemsWithReportLast(mergeUniqueStrings(orderedLines));
+}
+
+function extractManualWorkItems(sectionContent: string, automaticItems: string[]) {
+  return splitWorkItems(sectionContent).filter((item) => !automaticItems.includes(item));
+}
+
 export function QuotationBuilder() {
   const { user } = useSession();
   const router = useRouter();
@@ -283,6 +299,7 @@ export function QuotationBuilder() {
   const quotationTemplateQuery = useQuotationTemplate();
   const specialConsiderationCatalogQuery = useSpecialConsiderationCatalog();
   const workItemCatalogQuery = useWorkItemCatalog();
+  const reusableTextBlocksQuery = useReusableTextBlocks();
   const updatePricingProfilesMutation = useUpdatePricingProfiles();
   const updateQuotationTemplateMutation = useUpdateQuotationTemplate();
   const createMutation = useCreateQuotation();
@@ -302,6 +319,12 @@ export function QuotationBuilder() {
   const [highlightedClientIndex, setHighlightedClientIndex] = useState(0);
   const [step, setStep] = useState<'client' | 'services' | 'considerations' | 'work' | 'conditions' | 'preview'>('client');
   const [title, setTitle] = useState('');
+  const [coverTitle, setCoverTitle] = useState('');
+  const [executiveSummary, setExecutiveSummary] = useState('');
+  const [serviceType, setServiceType] = useState('General');
+  const [templateType, setTemplateType] = useState('General');
+  const [pricingRule, setPricingRule] = useState('STANDARD');
+  const [validityDays, setValidityDays] = useState('30');
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [currency, setCurrency] = useState<'MXN' | 'USD'>('MXN');
   const [selectedServiceId, setSelectedServiceId] = useState('');
@@ -317,6 +340,7 @@ export function QuotationBuilder() {
   const [didHydrateEdit, setDidHydrateEdit] = useState(false);
   const [catalogUpdateModalOpen, setCatalogUpdateModalOpen] = useState(false);
   const [selectedWorkItem, setSelectedWorkItem] = useState('');
+  const [selectedReusableBlockIds, setSelectedReusableBlockIds] = useState<string[]>([]);
 
   const allServices = useMemo(
     () =>
@@ -413,7 +437,17 @@ export function QuotationBuilder() {
     [editingId, quotationsQuery.data],
   );
   const savedServiceTemplates = serviceTemplatesQuery.data || [];
+  const filteredServiceTemplates = useMemo(
+    () =>
+      savedServiceTemplates.filter((template) =>
+        !templateType || templateType === 'General'
+          ? true
+          : (template.templateType || 'General') === templateType,
+      ),
+    [savedServiceTemplates, templateType],
+  );
   const workItemCatalog = workItemCatalogQuery.data || [];
+  const reusableTextBlocks = reusableTextBlocksQuery.data || [];
 
   const exchangeRate = Number(exchangeRateQuery.data?.rate || 0);
   const serviceSubtotal = useMemo(() => items.reduce((sum, item) => sum + item.price * item.quantity, 0), [items]);
@@ -544,11 +578,7 @@ export function QuotationBuilder() {
     return [...conceptRows, ...specialRows];
   }, [currency, exchangeRate, items, serviceSubtotal, specialConsiderations]);
   const autoWorkItems = useMemo(
-    () => {
-      const orderedConcepts = [...items].sort(compareWorkItemCodes);
-      const orderedLines = orderedConcepts.flatMap((item) => splitWorkItems(item.relatedWork || ''));
-      return orderWorkItemsWithReportLast(mergeUniqueStrings(orderedLines));
-    },
+    () => deriveAutoWorkItemsFromSeed(items),
     [items],
   );
   const workSection = useMemo(
@@ -643,7 +673,7 @@ export function QuotationBuilder() {
       const initialWorkSection = normalizedSections.find(
         (section) => normalizeSectionTitle(section.title) === 'trabajos a realizar:',
       );
-      setManualWorkItems(splitWorkItems(initialWorkSection?.content || ''));
+      setManualWorkItems([]);
       return;
     }
 
@@ -659,18 +689,51 @@ export function QuotationBuilder() {
     setClientId(editingQuotation.client.id);
     setClientQuery('');
     setTitle(editingQuotation.title);
+    setCoverTitle(editingQuotation.coverTitle || editingQuotation.title);
+    setExecutiveSummary(editingQuotation.executiveSummary || '');
+    setServiceType(editingQuotation.serviceType || 'General');
+    setTemplateType(editingQuotation.templateType || 'General');
+    setPricingRule(editingQuotation.pricingRule || 'STANDARD');
+    setValidityDays('30');
     setCurrency((editingQuotation.currency || 'MXN') as 'MXN' | 'USD');
+    const hydratedItems = editingQuotation.items
+      .filter((item) => item.serviceId && item.pricingProfileId)
+      .map((item) => ({
+        serviceId: item.serviceId as string,
+        pricingProfileId: item.pricingProfileId as string,
+        code: item.serviceCode,
+        name: item.serviceName,
+        relatedWork:
+          allServices.find((service) => service.id === item.serviceId)?.relatedWork || '',
+        quantity: Number(item.quantity),
+        price: Number(item.unitPrice),
+        category: item.categoryName,
+        currency: (editingQuotation.currency || 'MXN') as 'MXN' | 'USD',
+        pricingProfileName: item.pricingProfileName || 'Precio general',
+        isOptional: Boolean(item.isOptional),
+        optionGroup: item.optionGroup || '',
+        optionLabel: item.optionLabel || '',
+        priceOriginCurrency: (item.priceOriginCurrency as 'MXN' | 'USD') || ((editingQuotation.currency || 'MXN') as 'MXN' | 'USD'),
+        priceInput: formatEditableMoney(Number(item.unitPrice), (editingQuotation.currency || 'MXN') as 'MXN' | 'USD'),
+        basePrice: Number(item.unitPrice),
+        priceOverridden: false,
+      }));
     setCommercialSections(
       (() => {
         const normalizedSections = normalizeCommercialSections(
-        Array.isArray((editingQuotation as { commercialSections?: CommercialSection[] }).commercialSections)
-          ? ((editingQuotation as { commercialSections?: CommercialSection[] }).commercialSections as CommercialSection[])
-          : DEFAULT_COMMERCIAL_SECTIONS,
+          Array.isArray((editingQuotation as { commercialSections?: CommercialSection[] }).commercialSections)
+            ? ((editingQuotation as { commercialSections?: CommercialSection[] }).commercialSections as CommercialSection[])
+            : DEFAULT_COMMERCIAL_SECTIONS,
         );
         const initialWorkSection = normalizedSections.find(
           (section) => normalizeSectionTitle(section.title) === 'trabajos a realizar:',
         );
-        setManualWorkItems(splitWorkItems(initialWorkSection?.content || ''));
+        setManualWorkItems(
+          extractManualWorkItems(
+            initialWorkSection?.content || '',
+            deriveAutoWorkItemsFromSeed(hydratedItems),
+          ),
+        );
         return normalizedSections;
       })(),
     );
@@ -695,27 +758,7 @@ export function QuotationBuilder() {
               usdAmount: item.usdAmount ? formatCurrency(Number(item.usdAmount), 'USD') : '',
             })) || [],
     );
-    setItems(
-      editingQuotation.items
-        .filter((item) => item.serviceId && item.pricingProfileId)
-        .map((item) => ({
-          serviceId: item.serviceId as string,
-          pricingProfileId: item.pricingProfileId as string,
-          code: item.serviceCode,
-          name: item.serviceName,
-          relatedWork:
-            allServices.find((service) => service.id === item.serviceId)?.relatedWork || '',
-              quantity: Number(item.quantity),
-              price: Number(item.unitPrice),
-          category: item.categoryName,
-          currency: (editingQuotation.currency || 'MXN') as 'MXN' | 'USD',
-          pricingProfileName: item.pricingProfileName || 'Precio general',
-          priceOriginCurrency: (item.priceOriginCurrency as 'MXN' | 'USD') || ((editingQuotation.currency || 'MXN') as 'MXN' | 'USD'),
-          priceInput: formatEditableMoney(Number(item.unitPrice), (editingQuotation.currency || 'MXN') as 'MXN' | 'USD'),
-          basePrice: Number(item.unitPrice),
-          priceOverridden: false,
-        })),
-    );
+    setItems(hydratedItems);
     setStep('client');
     setDidHydrateEdit(true);
   }, [allServices.length, didHydrateEdit, editingQuotation]);
@@ -756,17 +799,82 @@ export function QuotationBuilder() {
     }
 
     setTitle(template.name || '');
+    setCoverTitle(template.name || '');
+    setTemplateType(template.templateType || 'General');
+    const hydratedItems = template.items
+      .filter((item) => item.serviceId && item.pricingProfileId)
+      .map((item) => ({
+        serviceId: item.serviceId,
+        pricingProfileId: item.pricingProfileId,
+        code:
+          allServices.find((service) => service.id === item.serviceId)?.code || 'SIN CLAVE',
+        name:
+          allServices.find((service) => service.id === item.serviceId)?.name || 'Concepto precargado',
+        relatedWork:
+          allServices.find((service) => service.id === item.serviceId)?.relatedWork || '',
+        quantity: Number(item.quantity),
+        price:
+          typeof item.unitPriceOverride === 'number'
+            ? item.unitPriceOverride
+            : resolveProfilePrice(
+                allServices
+                  .find((service) => service.id === item.serviceId)
+                  ?.pricingProfiles.find((profile) => profile.id === item.pricingProfileId),
+                currency,
+              )?.price || 0,
+        category:
+          allServices.find((service) => service.id === item.serviceId)?.categoryName || '',
+        currency,
+        pricingProfileName:
+          allServices
+            .find((service) => service.id === item.serviceId)
+            ?.pricingProfiles.find((profile) => profile.id === item.pricingProfileId)?.name || 'Precio general',
+        isOptional: Boolean(item.isOptional),
+        optionGroup: item.optionGroup || '',
+        optionLabel: item.optionLabel || '',
+        priceOriginCurrency:
+          resolveProfilePrice(
+            allServices
+              .find((service) => service.id === item.serviceId)
+              ?.pricingProfiles.find((profile) => profile.id === item.pricingProfileId),
+            currency,
+          )?.priceOriginCurrency || currency,
+        priceInput:
+          (
+            typeof item.unitPriceOverride === 'number'
+              ? item.unitPriceOverride
+              : resolveProfilePrice(
+                  allServices
+                    .find((service) => service.id === item.serviceId)
+                    ?.pricingProfiles.find((profile) => profile.id === item.pricingProfileId),
+                  currency,
+                )?.price || 0
+          ).toFixed(2),
+        basePrice:
+          resolveProfilePrice(
+            allServices
+              .find((service) => service.id === item.serviceId)
+              ?.pricingProfiles.find((profile) => profile.id === item.pricingProfileId),
+            currency,
+          )?.price || 0,
+        priceOverridden: typeof item.unitPriceOverride === 'number',
+      }));
     setCommercialSections(
       (() => {
         const normalizedSections = normalizeCommercialSections(
-        Array.isArray(template.commercialSections)
-          ? (template.commercialSections as CommercialSection[])
-          : DEFAULT_COMMERCIAL_SECTIONS,
+          Array.isArray(template.commercialSections)
+            ? (template.commercialSections as CommercialSection[])
+            : DEFAULT_COMMERCIAL_SECTIONS,
         );
         const initialWorkSection = normalizedSections.find(
           (section) => normalizeSectionTitle(section.title) === 'trabajos a realizar:',
         );
-        setManualWorkItems(splitWorkItems(initialWorkSection?.content || ''));
+        setManualWorkItems(
+          extractManualWorkItems(
+            initialWorkSection?.content || '',
+            deriveAutoWorkItemsFromSeed(hydratedItems),
+          ),
+        );
         return normalizedSections;
       })(),
     );
@@ -791,63 +899,7 @@ export function QuotationBuilder() {
               usdAmount: item.usdAmount ? formatCurrency(Number(item.usdAmount), 'USD') : '',
             })) || [],
     );
-    setItems(
-      template.items
-        .filter((item) => item.serviceId && item.pricingProfileId)
-        .map((item) => ({
-          serviceId: item.serviceId,
-          pricingProfileId: item.pricingProfileId,
-          code:
-            allServices.find((service) => service.id === item.serviceId)?.code || 'SIN CLAVE',
-          name:
-            allServices.find((service) => service.id === item.serviceId)?.name || 'Concepto precargado',
-          relatedWork:
-            allServices.find((service) => service.id === item.serviceId)?.relatedWork || '',
-          quantity: Number(item.quantity),
-          price:
-            typeof item.unitPriceOverride === 'number'
-              ? item.unitPriceOverride
-              : resolveProfilePrice(
-                  allServices
-                    .find((service) => service.id === item.serviceId)
-                    ?.pricingProfiles.find((profile) => profile.id === item.pricingProfileId),
-                  currency,
-                )?.price || 0,
-          category:
-            allServices.find((service) => service.id === item.serviceId)?.categoryName || '',
-          currency,
-          pricingProfileName:
-            allServices
-              .find((service) => service.id === item.serviceId)
-              ?.pricingProfiles.find((profile) => profile.id === item.pricingProfileId)?.name || 'Precio general',
-          priceOriginCurrency:
-            resolveProfilePrice(
-              allServices
-                .find((service) => service.id === item.serviceId)
-                ?.pricingProfiles.find((profile) => profile.id === item.pricingProfileId),
-              currency,
-            )?.priceOriginCurrency || currency,
-          priceInput:
-            (
-              typeof item.unitPriceOverride === 'number'
-                ? item.unitPriceOverride
-                : resolveProfilePrice(
-                    allServices
-                      .find((service) => service.id === item.serviceId)
-                      ?.pricingProfiles.find((profile) => profile.id === item.pricingProfileId),
-                    currency,
-                  )?.price || 0
-            ).toFixed(2),
-          basePrice:
-            resolveProfilePrice(
-              allServices
-                .find((service) => service.id === item.serviceId)
-                ?.pricingProfiles.find((profile) => profile.id === item.pricingProfileId),
-              currency,
-            )?.price || 0,
-          priceOverridden: typeof item.unitPriceOverride === 'number',
-        })),
-    );
+    setItems(hydratedItems);
     setSelectedTemplateId(template.id);
     showTimedToast('Conceptos precargados', 'Se reutilizó la configuración de una cotización previa para este servicio.');
   }
@@ -1241,6 +1293,9 @@ export function QuotationBuilder() {
           priceInput: formatEditableMoney(effectiveUnitPrice, currency),
           basePrice: resolvedPrice.price,
           priceOverridden: priceWasOverridden,
+          isOptional: false,
+          optionGroup: '',
+          optionLabel: '',
         },
         ...current,
       ];
@@ -1265,6 +1320,26 @@ export function QuotationBuilder() {
     );
   }
 
+  function toggleOptionalItem(key: string) {
+    setItems((current) =>
+      current.map((item) =>
+        `${item.code}-${item.pricingProfileId}-${item.currency}` === key
+          ? { ...item, isOptional: !item.isOptional }
+          : item,
+      ),
+    );
+  }
+
+  function updateOptionalMeta(key: string, field: 'optionGroup' | 'optionLabel', value: string) {
+    setItems((current) =>
+      current.map((item) =>
+        `${item.code}-${item.pricingProfileId}-${item.currency}` === key
+          ? { ...item, [field]: value }
+          : item,
+      ),
+    );
+  }
+
   async function persistQuotation(saveModifiedPrices: boolean) {
     if (!clientId || !items.length || !exchangeRate) {
       return;
@@ -1274,6 +1349,13 @@ export function QuotationBuilder() {
       clientId,
       createdById: user.id,
       title,
+      coverTitle,
+      executiveSummary,
+      serviceType,
+      templateType,
+      pricingRule,
+      validityDays: Number(validityDays || 30),
+      reusableBlockIds: selectedReusableBlockIds,
       durationOfWork:
         commercialSections.find((section) => section.title === 'Duracion de los trabajos:')?.content,
       notes:
@@ -1309,6 +1391,9 @@ export function QuotationBuilder() {
         pricingProfileId: item.pricingProfileId,
         quantity: item.quantity,
         unitPriceOverride: item.priceOverridden ? item.price : undefined,
+        isOptional: item.isOptional,
+        optionGroup: item.optionGroup || undefined,
+        optionLabel: item.optionLabel || undefined,
       })),
     };
 
@@ -1595,7 +1680,18 @@ export function QuotationBuilder() {
               </div>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Título comercial</p>
+                <Input value={coverTitle} onChange={(event) => setCoverTitle(event.target.value)} placeholder="Título visible para el cliente" />
+              </div>
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Resumen ejecutivo</p>
+                <Textarea value={executiveSummary} onChange={(event) => setExecutiveSummary(event.target.value)} rows={4} placeholder="Objetivo, alcance, entregables y valor comercial." />
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Cliente</p>
                 <Select value={clientId} onChange={(event) => chooseClient(event.target.value)}>
@@ -1630,20 +1726,85 @@ export function QuotationBuilder() {
                   }}
                 >
                   <option value="">Selecciona servicio guardado</option>
-                  {savedServiceTemplates.map((quotation) => (
+                  {filteredServiceTemplates.map((quotation) => (
                     <option key={quotation.id} value={quotation.id}>
                       {quotation.name}
                     </option>
                   ))}
                 </Select>
               </div>
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Tipo de servicio</p>
+                <Select value={serviceType} onChange={(event) => setServiceType(event.target.value)}>
+                  <option value="General">General</option>
+                  <option value="Mantenimiento">Mantenimiento</option>
+                  <option value="Diagnóstico">Diagnóstico</option>
+                  <option value="Puesta en marcha">Puesta en marcha</option>
+                  <option value="Proyecto">Proyecto</option>
+                </Select>
+              </div>
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Plantilla comercial</p>
+                <Select value={templateType} onChange={(event) => setTemplateType(event.target.value)}>
+                  <option value="General">General</option>
+                  <option value="Servicio">Servicio</option>
+                  <option value="Proyecto">Proyecto</option>
+                  <option value="Urgente">Urgente</option>
+                </Select>
+              </div>
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Regla de precio</p>
+                <Select value={pricingRule} onChange={(event) => setPricingRule(event.target.value)}>
+                  <option value="STANDARD">Tarifa estándar</option>
+                  <option value="URGENT">Urgencia alta</option>
+                  <option value="PREFERRED_CLIENT">Cliente preferente</option>
+                  <option value="WEEKEND">Fin de semana</option>
+                </Select>
+              </div>
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Vigencia (días)</p>
+                <Input value={validityDays} onChange={(event) => setValidityDays(event.target.value.replace(/[^\d]/g, ''))} placeholder="30" />
+              </div>
             </div>
+
+            {reusableTextBlocks.length ? (
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-[var(--color-text)]">Bloques reutilizables</p>
+                  <p className="text-sm text-[var(--color-text-muted)]">Puedes inyectar exclusiones, entregables, supuestos o garantías predefinidas.</p>
+                </div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {reusableTextBlocks.map((block) => {
+                    const selected = selectedReusableBlockIds.includes(block.id);
+                    return (
+                      <button
+                        key={block.id}
+                        type="button"
+                        onClick={() =>
+                          setSelectedReusableBlockIds((current) =>
+                            current.includes(block.id) ? current.filter((id) => id !== block.id) : [...current, block.id],
+                          )
+                        }
+                        className={`rounded-2xl border px-4 py-3 text-left text-sm transition ${
+                          selected
+                            ? 'border-[var(--color-primary)] bg-[rgba(249,115,22,0.08)] text-[var(--color-text)]'
+                            : 'border-[var(--color-border)] bg-white text-[var(--color-text-muted)]'
+                        }`}
+                      >
+                        <p className="font-medium">{block.name}</p>
+                        <p className="mt-1 text-xs opacity-75">{block.type}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
 
             <div className="flex justify-end">
               <Button
                 variant="secondary"
                 onClick={() => {
-                  const matched = savedServiceTemplates.find(
+                  const matched = filteredServiceTemplates.find(
                     (quotation) => quotation.name.trim().toLowerCase() === title.trim().toLowerCase(),
                   );
                   if (matched) {
@@ -1864,6 +2025,29 @@ export function QuotationBuilder() {
                         </button>
                       </div>
                       <p className="min-w-36 text-right font-semibold">{formatCurrency(item.price * item.quantity, item.currency)}</p>
+                    </div>
+                    <div className="mt-4 grid gap-3 md:grid-cols-[180px_1fr_1fr]">
+                      <button
+                        type="button"
+                        onClick={() => toggleOptionalItem(key)}
+                        className={`rounded-2xl border px-4 py-3 text-sm transition ${
+                          item.isOptional
+                            ? 'border-[var(--color-primary)] bg-[rgba(249,115,22,0.08)] text-[var(--color-text)]'
+                            : 'border-[var(--color-border)] bg-white text-[var(--color-text-muted)]'
+                        }`}
+                      >
+                        {item.isOptional ? 'Concepto opcional' : 'Marcar opcional'}
+                      </button>
+                      <Input
+                        value={item.optionGroup || ''}
+                        onChange={(event) => updateOptionalMeta(key, 'optionGroup', event.target.value)}
+                        placeholder="Grupo alternativo"
+                      />
+                      <Input
+                        value={item.optionLabel || ''}
+                        onChange={(event) => updateOptionalMeta(key, 'optionLabel', event.target.value)}
+                        placeholder="Etiqueta comercial"
+                      />
                     </div>
                   </div>
                 );
@@ -2179,11 +2363,33 @@ export function QuotationBuilder() {
           <CardHeader title="Paso 6. Preview de la cotización" description="Revisa cliente, conceptos, trabajos, consideraciones y condiciones antes de generar la cotización." />
             <CardContent className="space-y-4">
               <div className="rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel-subtle)] p-4">
+                <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Portada comercial</p>
+                <p className="mt-2 font-semibold text-[var(--color-text)]">{coverTitle || title || 'Sin título'}</p>
+                <p className="mt-1 text-sm text-[var(--color-text-muted)] whitespace-pre-line">{executiveSummary || 'Agrega un resumen ejecutivo para reforzar el valor comercial.'}</p>
+                <div className="mt-3 grid gap-3 md:grid-cols-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Tipo</p>
+                    <p className="mt-1 text-sm text-[var(--color-text-muted)]">{serviceType}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Plantilla</p>
+                    <p className="mt-1 text-sm text-[var(--color-text-muted)]">{templateType}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Vigencia</p>
+                    <p className="mt-1 text-sm text-[var(--color-text-muted)]">{validityDays || '30'} días</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel-subtle)] p-4">
                 <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Cliente</p>
                 <p className="mt-2 font-semibold text-[var(--color-text)]">{selectedClient?.legalName || 'Sin cliente'}</p>
                 <p className="mt-1 text-sm text-[var(--color-text-muted)]">{selectedClient?.rfc || ''}</p>
                 <p className="mt-2 text-xs uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Vendedor</p>
                 <p className="mt-1 text-sm text-[var(--color-text-muted)]">{selectedSeller?.name || 'Sin vendedor'}</p>
+                <p className="mt-2 text-xs uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Regla de precio</p>
+                <p className="mt-1 text-sm text-[var(--color-text-muted)]">{pricingRule}</p>
               </div>
 
               <div className="rounded-[24px] border border-[var(--color-border)] bg-white p-5">

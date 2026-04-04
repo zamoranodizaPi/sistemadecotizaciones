@@ -16,13 +16,25 @@ enum UserRole {
 }
 
 enum QuotationStatus {
+  BORRADOR
   NUEVA
   EN_PROCESO
   ENVIADA
+  VISTA
+  NEGOCIACION
   ACEPTADA
+  RECHAZADA
+  VENCIDA
   EJECUTADA
   CUENTAS_POR_COBRAR
   PAGADA
+}
+
+enum ApprovalStatus {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum ActivityType {
@@ -50,6 +62,7 @@ model User {
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
   quotations   Quotation[]       @relation("QuotationOwner")
+  approvedQuotations Quotation[] @relation("QuotationApprover")
   history      QuotationHistory[]
   activities   Activity[]
 }
@@ -211,10 +224,32 @@ model Contact {
 model Quotation {
   id               String             @id @default(uuid())
   folio            String             @unique
+  rootQuotationId  String?
+  previousVersionId String?
   clientId         String
   pipelineId       String?
   stageId          String?
-  status           QuotationStatus    @default(NUEVA)
+  status           QuotationStatus    @default(BORRADOR)
+  serviceType      String?
+  templateType     String?
+  coverTitle       String?
+  executiveSummary String?
+  versionNumber    Int                @default(1)
+  validUntil       DateTime?
+  sentAt           DateTime?
+  viewedAt         DateTime?
+  acceptedAt       DateTime?
+  rejectedAt       DateTime?
+  convertedToWorkOrderAt DateTime?
+  workOrderNumber  String?
+  pricingRule      String?
+  pricingRuleLabel String?
+  discountPercent  Decimal?           @db.Decimal(8, 4)
+  requiresApproval Boolean            @default(false)
+  approvalStatus   ApprovalStatus     @default(NOT_REQUIRED)
+  approvalReason   String?
+  approvalResolvedAt DateTime?
+  approvedById     String?
   title            String
   notes            String?
   durationOfWork   String?
@@ -233,6 +268,11 @@ model Quotation {
   pipeline         Pipeline?          @relation(fields: [pipelineId], references: [id])
   stage            DealStage?         @relation(fields: [stageId], references: [id])
   createdBy        User               @relation("QuotationOwner", fields: [createdById], references: [id])
+  approvedBy       User?              @relation("QuotationApprover", fields: [approvedById], references: [id])
+  rootQuotation    Quotation?         @relation("QuotationRoot", fields: [rootQuotationId], references: [id])
+  previousVersion  Quotation?         @relation("QuotationVersion", fields: [previousVersionId], references: [id])
+  versions         Quotation[]        @relation("QuotationRoot")
+  nextVersions     Quotation[]        @relation("QuotationVersion")
   items            QuotationItem[]
   specialConsiderations QuotationSpecialConsideration[]
   history          QuotationHistory[]
@@ -287,6 +327,7 @@ model QuotationTemplateSetting {
 model ServiceTemplate {
   id                    String   @id @default(uuid())
   name                  String   @unique
+  templateType          String?
   items                 Json
   commercialSections    Json?
   specialConsiderations Json?
@@ -307,6 +348,19 @@ model WorkItemCatalog {
   @@index([deletedAt])
 }
 
+model ReusableTextBlock {
+  id        String   @id @default(uuid())
+  name      String
+  type      String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  @@unique([name, type])
+  @@index([type, deletedAt])
+}
+
 model QuotationItem {
   id                String    @id @default(uuid())
   quotationId       String
@@ -316,6 +370,9 @@ model QuotationItem {
   serviceName       String
   categoryName      String
   pricingProfileName String?
+  isOptional        Boolean   @default(false)
+  optionGroup       String?
+  optionLabel       String?
   quantity          Decimal   @db.Decimal(12, 2)
   unitPrice         Decimal   @db.Decimal(12, 2)
   totalPrice        Decimal   @db.Decimal(12, 2)
@@ -356,4 +413,33 @@ model Activity {
   user         User?        @relation(fields: [userId], references: [id])
 
   @@index([quotationId, createdAt])
+}
+
+model LearnedRule {
+  id                String   @id @default(uuid())
+  inputText         String
+  normalizedInput   String   @unique
+  detectedCategory  String?
+  detectedService   String?
+  variables         Json
+  suggestedServices Json
+  confidence        Float
+  usageCount        Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([detectedCategory])
+  @@index([detectedService])
+  @@index([usageCount, createdAt])
+}
+
+model AiFeedback {
+  id                  String   @id @default(uuid())
+  inputText           String
+  normalizedInput     String
+  aiOutput            Json
+  userCorrectedOutput Json
+  createdAt           DateTime @default(now())
+
+  @@index([normalizedInput, createdAt])
 }

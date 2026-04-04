@@ -1,9 +1,12 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiDeleteWithBody, apiGet, apiPatch, apiPost } from './client';
+import { apiDelete, apiDeleteWithBody, apiGet, apiPatch, apiPost } from './client';
 import type {
   ActivityResponse,
+  AiCreateDealResponse,
+  AiFeedbackResponse,
+  AiSuggestedQuoteResponse,
   AssignableUserResponse,
   AuthUser,
   CatalogResponse,
@@ -18,10 +21,12 @@ import type {
   PdfResponse,
   PipelineResponse,
   QuotationListResponse,
+  ReusableTextBlockResponse,
   ServiceTemplateResponse,
   SpecialConsiderationCatalogResponse,
   QuotationTemplateResponse,
   QuotationStatus,
+  WorkItemCatalogEntry,
   WorkItemCatalogResponse,
 } from './types';
 
@@ -78,6 +83,38 @@ export function useDashboardMetrics() {
   return useQuery({
     queryKey: ['dashboard-metrics'],
     queryFn: () => apiGet<DashboardMetricsResponse>('/metrics/dashboard'),
+  });
+}
+
+export function useAiSuggestQuote() {
+  return useMutation({
+    mutationFn: (payload: { text: string }) =>
+      apiPost<AiSuggestedQuoteResponse>('/ai/suggest-quote', payload),
+  });
+}
+
+export function useAiCreateDeal() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: { text: string; clientId: string; title?: string }) =>
+      apiPost<AiCreateDealResponse>('/ai/create-deal', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotations'] });
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] });
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+    },
+  });
+}
+
+export function useAiFeedback() {
+  return useMutation({
+    mutationFn: (payload: {
+      input: string;
+      original: Record<string, unknown>;
+      corrected: Record<string, unknown>;
+    }) => apiPost<AiFeedbackResponse>('/ai/feedback', payload),
   });
 }
 
@@ -442,6 +479,13 @@ export function useCreateQuotation() {
       clientId: string;
       createdById?: string;
       title: string;
+      coverTitle?: string;
+      executiveSummary?: string;
+      serviceType?: string;
+      templateType?: string;
+      pricingRule?: string;
+      validityDays?: number;
+      reusableBlockIds?: string[];
       notes?: string;
       durationOfWork?: string;
       termsAndConditions?: string;
@@ -460,7 +504,15 @@ export function useCreateQuotation() {
       >;
       currency?: string;
       exchangeRate?: number;
-      items: Array<{ serviceId: string; pricingProfileId: string; quantity: number; unitPriceOverride?: number }>;
+      items: Array<{
+        serviceId: string;
+        pricingProfileId: string;
+        quantity: number;
+        unitPriceOverride?: number;
+        isOptional?: boolean;
+        optionGroup?: string;
+        optionLabel?: string;
+      }>;
     }) => apiPost('/quotations', payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['quotations'] });
@@ -503,6 +555,83 @@ export function useWorkItemCatalog() {
   });
 }
 
+export function useReusableTextBlocks() {
+  return useQuery({
+    queryKey: ['reusable-text-blocks'],
+    queryFn: () => apiGet<ReusableTextBlockResponse>('/quotations/reusable-text-blocks'),
+  });
+}
+
+export function useCreateReusableTextBlock() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: { name: string; type: string; content: string }) =>
+      apiPost('/quotations/reusable-text-blocks', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reusable-text-blocks'] });
+    },
+  });
+}
+
+export function useUpdateReusableTextBlock() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, name, type, content }: { id: string; name: string; type: string; content: string }) =>
+      apiPatch(`/quotations/reusable-text-blocks/${id}`, { name, type, content }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reusable-text-blocks'] });
+    },
+  });
+}
+
+export function useDeleteReusableTextBlock() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/quotations/reusable-text-blocks/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reusable-text-blocks'] });
+    },
+  });
+}
+
+export function useCreateWorkItemCatalog() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: { name: string }) =>
+      apiPost<WorkItemCatalogEntry>('/quotations/work-items/catalog', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['work-item-catalog'] });
+    },
+  });
+}
+
+export function useUpdateWorkItemCatalog() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      apiPatch<WorkItemCatalogEntry>(`/quotations/work-items/catalog/${id}`, { name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['work-item-catalog'] });
+    },
+  });
+}
+
+export function useDeleteWorkItemCatalog() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => apiDelete<WorkItemCatalogEntry>(`/quotations/work-items/catalog/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['work-item-catalog'] });
+    },
+  });
+}
+
 export function useUpdateQuotationTemplate() {
   const queryClient = useQueryClient();
 
@@ -538,12 +667,35 @@ export function useUpdateQuotation() {
       clientId,
       title,
       notes,
+      coverTitle,
+      executiveSummary,
+      serviceType,
+      templateType,
+      pricingRule,
+      validityDays,
     }: {
       id: string;
       clientId?: string;
       title?: string;
       notes?: string;
-    }) => apiPatch(`/quotations/${id}`, { clientId, title, notes }),
+      coverTitle?: string;
+      executiveSummary?: string;
+      serviceType?: string;
+      templateType?: string;
+      pricingRule?: string;
+      validityDays?: number;
+    }) =>
+      apiPatch(`/quotations/${id}`, {
+        clientId,
+        title,
+        notes,
+        coverTitle,
+        executiveSummary,
+        serviceType,
+        templateType,
+        pricingRule,
+        validityDays,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['quotations'] });
       queryClient.invalidateQueries({ queryKey: ['kanban'] });
@@ -566,6 +718,13 @@ export function useUpdateQuotationFromBuilder() {
         clientId: string;
         createdById?: string;
         title: string;
+        coverTitle?: string;
+        executiveSummary?: string;
+        serviceType?: string;
+        templateType?: string;
+        pricingRule?: string;
+        validityDays?: number;
+        reusableBlockIds?: string[];
         notes?: string;
         durationOfWork?: string;
         termsAndConditions?: string;
@@ -584,7 +743,15 @@ export function useUpdateQuotationFromBuilder() {
         >;
         currency?: string;
         exchangeRate?: number;
-        items: Array<{ serviceId: string; pricingProfileId: string; quantity: number; unitPriceOverride?: number }>;
+        items: Array<{
+          serviceId: string;
+          pricingProfileId: string;
+          quantity: number;
+          unitPriceOverride?: number;
+          isOptional?: boolean;
+          optionGroup?: string;
+          optionLabel?: string;
+        }>;
       };
     }) => apiPatch(`/quotations/${id}/builder`, payload),
     onSuccess: () => {
@@ -632,14 +799,32 @@ export function useUpdateQuotationCommercial() {
   return useMutation({
     mutationFn: ({
       id,
+      executiveSummary,
+      coverTitle,
+      serviceType,
+      templateType,
+      pricingRule,
+      validityDays,
       durationOfWork,
       termsAndConditions,
     }: {
       id: string;
+      executiveSummary?: string;
+      coverTitle?: string;
+      serviceType?: string;
+      templateType?: string;
+      pricingRule?: string;
+      validityDays?: number;
       durationOfWork?: string;
       termsAndConditions?: string;
     }) =>
       apiPatch(`/quotations/${id}/commercial`, {
+        executiveSummary,
+        coverTitle,
+        serviceType,
+        templateType,
+        pricingRule,
+        validityDays,
         durationOfWork,
         termsAndConditions,
       }),
@@ -675,6 +860,58 @@ export function useCreateQuotationActivity() {
       queryClient.invalidateQueries({ queryKey: ['quotation-activities', variables.id] });
       queryClient.invalidateQueries({ queryKey: ['quotations'] });
       queryClient.invalidateQueries({ queryKey: ['kanban'] });
+    },
+  });
+}
+
+export function useDuplicateQuotation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => apiPost(`/quotations/${id}/duplicate`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotations'] });
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
+    },
+  });
+}
+
+export function useMarkQuotationInteraction() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, action }: { id: string; action: 'sent' | 'viewed' | 'accepted' | 'rejected' }) =>
+      apiPost(`/quotations/${id}/mark-${action}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotations'] });
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] });
+    },
+  });
+}
+
+export function useResolveQuotationApproval() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, decision }: { id: string; decision: 'approve' | 'reject' }) =>
+      apiPost(`/quotations/${id}/${decision === 'approve' ? 'approve-discount' : 'reject-discount'}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotations'] });
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
+    },
+  });
+}
+
+export function useConvertQuotationToWorkOrder() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => apiPost(`/quotations/${id}/convert-to-work-order`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotations'] });
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] });
     },
   });
 }

@@ -1,11 +1,15 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { ActivityType, Prisma, QuotationStatus, SpecialConsiderationType, UserRole } from '@prisma/client';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ActivityType, ApprovalStatus, Prisma, QuotationStatus, SpecialConsiderationType, UserRole } from '@prisma/client';
 import { PrismaService } from '../../../../shared/infrastructure/prisma.service';
 import { CatalogService } from '../../../catalog/infrastructure/services/catalog.service';
 import {
+  CreateReusableTextBlockDto,
+  CreateWorkItemCatalogDto,
   CreateQuotationActivityDto,
   CreateQuotationDto,
   UpdateQuotationDto,
+  UpdateReusableTextBlockDto,
+  UpdateWorkItemCatalogDto,
   UpdateQuotationTemplateDto,
   UpdateQuotationCommercialDto,
 } from '../../application/dto/create-quotation.dto';
@@ -33,6 +37,7 @@ export class QuotationsService {
         stage: true,
         pipeline: true,
         createdBy: true,
+        approvedBy: true,
         activities: { orderBy: { createdAt: 'desc' } },
       },
       orderBy: { createdAt: 'desc' },
@@ -114,6 +119,133 @@ export class QuotationsService {
     });
   }
 
+  listReusableTextBlocks() {
+    return this.prisma.reusableTextBlock.findMany({
+      where: { deletedAt: null },
+      orderBy: [{ type: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  async createWorkItemCatalog(dto: CreateWorkItemCatalogDto) {
+    const name = this.normalizeWorkItemName(dto.name);
+    const existing = await this.prisma.workItemCatalog.findUnique({
+      where: { name },
+    });
+
+    if (existing && existing.deletedAt === null) {
+      throw new ConflictException('Ya existe un trabajo con ese nombre.');
+    }
+
+    if (existing) {
+      return this.prisma.workItemCatalog.update({
+        where: { id: existing.id },
+        data: { name, deletedAt: null },
+      });
+    }
+
+    return this.prisma.workItemCatalog.create({
+      data: { name },
+    });
+  }
+
+  async updateWorkItemCatalog(id: string, dto: UpdateWorkItemCatalogDto) {
+    const existing = await this.prisma.workItemCatalog.findFirst({
+      where: { id, deletedAt: null },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('El trabajo solicitado ya no existe.');
+    }
+
+    const name = this.normalizeWorkItemName(dto.name);
+    const duplicated = await this.prisma.workItemCatalog.findUnique({
+      where: { name },
+    });
+
+    if (duplicated && duplicated.id !== id && duplicated.deletedAt === null) {
+      throw new ConflictException('Ya existe otro trabajo con ese nombre.');
+    }
+
+    if (duplicated && duplicated.id !== id && duplicated.deletedAt !== null) {
+      throw new ConflictException('Ya existe un trabajo archivado con ese nombre.');
+    }
+
+    return this.prisma.workItemCatalog.update({
+      where: { id },
+      data: { name },
+    });
+  }
+
+  async deleteWorkItemCatalog(id: string) {
+    const existing = await this.prisma.workItemCatalog.findFirst({
+      where: { id, deletedAt: null },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('El trabajo solicitado ya no existe.');
+    }
+
+    return this.prisma.workItemCatalog.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  async createReusableTextBlock(dto: CreateReusableTextBlockDto) {
+    const normalized = this.normalizeReusableTextBlock(dto);
+    const existing = await this.prisma.reusableTextBlock.findFirst({
+      where: {
+        name: normalized.name,
+        type: normalized.type,
+      },
+    });
+
+    if (existing && existing.deletedAt === null) {
+      throw new ConflictException('Ya existe un bloque reutilizable con ese nombre y tipo.');
+    }
+
+    if (existing) {
+      return this.prisma.reusableTextBlock.update({
+        where: { id: existing.id },
+        data: { ...normalized, deletedAt: null },
+      });
+    }
+
+    return this.prisma.reusableTextBlock.create({ data: normalized });
+  }
+
+  async updateReusableTextBlock(id: string, dto: UpdateReusableTextBlockDto) {
+    const existing = await this.prisma.reusableTextBlock.findFirst({
+      where: { id, deletedAt: null },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('El bloque reutilizable ya no existe.');
+    }
+
+    const normalized = this.normalizeReusableTextBlock(dto);
+
+    return this.prisma.reusableTextBlock.update({
+      where: { id },
+      data: normalized,
+    });
+  }
+
+  async deleteReusableTextBlock(id: string) {
+    const existing = await this.prisma.reusableTextBlock.findFirst({
+      where: { id, deletedAt: null },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('El bloque reutilizable ya no existe.');
+    }
+
+    return this.prisma.reusableTextBlock.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+  }
+
   async updateCommercialTemplate(dto: UpdateQuotationTemplateDto) {
     const sections = this.toJsonSections(this.normalizeCommercialSections(dto.sections));
     return this.prisma.quotationTemplateSetting.upsert({
@@ -139,6 +271,10 @@ export class QuotationsService {
         tax,
         total,
         currency,
+        discountPercent,
+        requiresApproval,
+        approvalStatus,
+        pricingRuleLabel,
       } = pricing;
       const commercialSections =
         dto.commercialSections?.length
@@ -149,7 +285,7 @@ export class QuotationsService {
       const year = new Date().getFullYear();
       const folio = `COT.${String(sequence).padStart(4, '0')}-${year}`;
       const pipeline = await this.pipelineService.ensureDefaultPipeline();
-      const initialStage = pipeline?.stages.find((stage) => stage.code === QuotationStatus.NUEVA);
+      const initialStage = pipeline?.stages.find((stage) => stage.code === QuotationStatus.BORRADOR);
 
       if (!pipeline || !initialStage) {
         throw new BadRequestException('Pipeline comercial no disponible');
@@ -174,6 +310,19 @@ export class QuotationsService {
           clientId: client.id,
           pipelineId: pipeline.id,
           stageId: initialStage.id,
+          rootQuotationId: null,
+          previousVersionId: null,
+          serviceType: dto.serviceType?.trim() || null,
+          templateType: dto.templateType?.trim() || null,
+          coverTitle: dto.coverTitle?.trim() || dto.title,
+          executiveSummary: dto.executiveSummary?.trim() || null,
+          versionNumber: 1,
+          validUntil: this.resolveValidUntil(dto.validityDays),
+          pricingRule: dto.pricingRule?.trim() || null,
+          pricingRuleLabel,
+          discountPercent,
+          requiresApproval,
+          approvalStatus,
           title: dto.title,
           notes: dto.notes,
           durationOfWork: dto.durationOfWork,
@@ -201,8 +350,8 @@ export class QuotationsService {
           history: {
             create: {
               eventType: 'QUOTATION_CREATED',
-              toStatus: QuotationStatus.NUEVA,
-              payload: { items: itemRows.length },
+              toStatus: QuotationStatus.BORRADOR,
+              payload: { items: itemRows.length, versionNumber: 1, requiresApproval },
             },
           },
           activities: {
@@ -214,6 +363,8 @@ export class QuotationsService {
                 total,
                 currency,
                 ownerId: requestedOwner?.id || null,
+                pricingRuleLabel,
+                validUntil: this.resolveValidUntil(dto.validityDays),
               },
               userId: actorUserId,
             },
@@ -287,6 +438,10 @@ export class QuotationsService {
       tax,
       total,
       currency,
+      discountPercent,
+      requiresApproval,
+      approvalStatus,
+      pricingRuleLabel,
     } = pricing;
     const commercialSections =
       dto.commercialSections?.length
@@ -319,6 +474,19 @@ export class QuotationsService {
         where: { id },
         data: {
           clientId: client.id,
+          serviceType: dto.serviceType?.trim() || null,
+          templateType: dto.templateType?.trim() || null,
+          coverTitle: dto.coverTitle?.trim() || dto.title,
+          executiveSummary: dto.executiveSummary?.trim() || null,
+          validUntil: this.resolveValidUntil(dto.validityDays),
+          pricingRule: dto.pricingRule?.trim() || null,
+          pricingRuleLabel,
+          discountPercent,
+          requiresApproval,
+          approvalStatus,
+          approvalReason: requiresApproval ? 'Descuento superior al umbral configurado.' : null,
+          approvalResolvedAt: requiresApproval ? null : quotation.approvalResolvedAt,
+          approvedById: requiresApproval ? null : quotation.approvedById,
           title: dto.title,
           notes: dto.notes,
           durationOfWork: dto.durationOfWork,
@@ -351,6 +519,8 @@ export class QuotationsService {
                 items: itemRows.length,
                 total,
                 currency,
+                validUntil: this.resolveValidUntil(dto.validityDays),
+                pricingRuleLabel,
               },
             },
           },
@@ -443,6 +613,15 @@ export class QuotationsService {
       where: { id },
       data: {
         clientId: dto.clientId,
+        coverTitle: dto.coverTitle,
+        executiveSummary: dto.executiveSummary,
+        serviceType: dto.serviceType,
+        templateType: dto.templateType,
+        pricingRule: dto.pricingRule,
+        validUntil:
+          typeof dto.validityDays === 'number'
+            ? this.resolveValidUntil(dto.validityDays)
+            : undefined,
         title: dto.title,
         notes: dto.notes,
         activities: {
@@ -457,6 +636,11 @@ export class QuotationsService {
             eventType: 'QUOTATION_UPDATED',
             payload: {
               clientId: dto.clientId,
+              coverTitle: dto.coverTitle,
+              executiveSummary: dto.executiveSummary,
+              serviceType: dto.serviceType,
+              templateType: dto.templateType,
+              pricingRule: dto.pricingRule,
               title: dto.title,
               notes: dto.notes,
             },
@@ -476,6 +660,15 @@ export class QuotationsService {
     return this.prisma.quotation.update({
       where: { id },
       data: {
+        executiveSummary: dto.executiveSummary,
+        coverTitle: dto.coverTitle,
+        serviceType: dto.serviceType,
+        templateType: dto.templateType,
+        pricingRule: dto.pricingRule,
+        validUntil:
+          typeof dto.validityDays === 'number'
+            ? this.resolveValidUntil(dto.validityDays)
+            : undefined,
         durationOfWork: dto.durationOfWork,
         termsAndConditions: dto.termsAndConditions,
         commercialSections: dto.commercialSections
@@ -487,6 +680,11 @@ export class QuotationsService {
             payload: {
               durationOfWork: dto.durationOfWork,
               termsAndConditions: dto.termsAndConditions,
+              executiveSummary: dto.executiveSummary,
+              coverTitle: dto.coverTitle,
+              serviceType: dto.serviceType,
+              templateType: dto.templateType,
+              pricingRule: dto.pricingRule,
               commercialSections: dto.commercialSections
                 ? this.toJsonSections(this.normalizeCommercialSections(dto.commercialSections))
                 : undefined,
@@ -533,7 +731,7 @@ export class QuotationsService {
       folio: quotation.folio,
       issueDate: this.formatPdfDate(quotation.createdAt),
       validUntil: this.formatPdfDate(
-        new Date(quotation.createdAt.getTime() + 30 * 24 * 60 * 60 * 1000),
+        quotation.validUntil || new Date(quotation.createdAt.getTime() + 30 * 24 * 60 * 60 * 1000),
       ),
       client: {
         legalName: quotation.client.legalName,
@@ -597,7 +795,7 @@ export class QuotationsService {
       folio: quotation.folio,
       issueDate: this.formatPdfDate(quotation.createdAt),
       validUntil: this.formatPdfDate(
-        new Date(quotation.createdAt.getTime() + 30 * 24 * 60 * 60 * 1000),
+        quotation.validUntil || new Date(quotation.createdAt.getTime() + 30 * 24 * 60 * 60 * 1000),
       ),
       client: {
         legalName: quotation.client.legalName,
@@ -671,6 +869,232 @@ export class QuotationsService {
     });
   }
 
+  async duplicateQuotation(id: string, actorUserId?: string) {
+    const quotation = await this.prisma.quotation.findUnique({
+      where: { id },
+      include: {
+        items: true,
+        specialConsiderations: { orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] },
+      },
+    });
+
+    if (!quotation || quotation.deletedAt) {
+      throw new NotFoundException('Cotización no encontrada');
+    }
+
+    const sequence = (await this.prisma.quotation.count()) + 1;
+    const year = new Date().getFullYear();
+    const folio = `COT.${String(sequence).padStart(4, '0')}-${year}`;
+    const pipeline = await this.pipelineService.ensureDefaultPipeline();
+    const draftStage = pipeline?.stages.find((stage) => stage.code === QuotationStatus.BORRADOR);
+    const rootId = quotation.rootQuotationId || quotation.id;
+
+    return this.prisma.quotation.create({
+      data: {
+        folio,
+        rootQuotationId: rootId,
+        previousVersionId: quotation.id,
+        clientId: quotation.clientId,
+        pipelineId: pipeline?.id,
+        stageId: draftStage?.id,
+        status: QuotationStatus.BORRADOR,
+        serviceType: quotation.serviceType,
+        templateType: quotation.templateType,
+        coverTitle: quotation.coverTitle,
+        executiveSummary: quotation.executiveSummary,
+        versionNumber: quotation.versionNumber + 1,
+        validUntil: quotation.validUntil,
+        pricingRule: quotation.pricingRule,
+        pricingRuleLabel: quotation.pricingRuleLabel,
+        discountPercent: quotation.discountPercent,
+        requiresApproval: quotation.requiresApproval,
+        approvalStatus: quotation.approvalStatus,
+        approvalReason: quotation.approvalReason,
+        title: `${quotation.title} v${quotation.versionNumber + 1}`,
+        notes: quotation.notes,
+        durationOfWork: quotation.durationOfWork,
+        termsAndConditions: quotation.termsAndConditions,
+        commercialSections: quotation.commercialSections as Prisma.InputJsonValue,
+        subtotal: quotation.subtotal,
+        tax: quotation.tax,
+        total: quotation.total,
+        currency: quotation.currency,
+        createdById: actorUserId || quotation.createdById,
+        items: {
+          create: quotation.items.map((item) => ({
+            serviceId: item.serviceId || undefined,
+            pricingProfileId: item.pricingProfileId || undefined,
+            serviceCode: item.serviceCode,
+            serviceName: item.serviceName,
+            categoryName: item.categoryName,
+            pricingProfileName: item.pricingProfileName,
+            isOptional: item.isOptional,
+            optionGroup: item.optionGroup,
+            optionLabel: item.optionLabel,
+            quantity: Number(item.quantity),
+            unitPrice: Number(item.unitPrice),
+            totalPrice: Number(item.totalPrice),
+            exchangeRateUsed: item.exchangeRateUsed ? Number(item.exchangeRateUsed) : undefined,
+            priceOriginCurrency: item.priceOriginCurrency || undefined,
+            priceVersionId: item.priceVersionId || undefined,
+          })),
+        },
+        specialConsiderations: {
+          create: quotation.specialConsiderations.map((item) => ({
+            type: item.type,
+            concept: item.concept || undefined,
+            quantity: item.quantity,
+            percentage: item.percentage ? Number(item.percentage) : undefined,
+            location: item.location || undefined,
+            mxnAmount: item.mxnAmount ? Number(item.mxnAmount) : undefined,
+            usdAmount: item.usdAmount ? Number(item.usdAmount) : undefined,
+            sortOrder: item.sortOrder,
+          })),
+        },
+        activities: {
+          create: {
+            type: ActivityType.EDIT,
+            description: `Se creó la versión ${quotation.versionNumber + 1} desde ${quotation.folio}`,
+            userId: actorUserId,
+          },
+        },
+      },
+    });
+  }
+
+  async markQuotationInteraction(
+    id: string,
+    action: 'sent' | 'viewed' | 'accepted' | 'rejected',
+    actorUserId?: string,
+  ) {
+    const current = await this.prisma.quotation.findUnique({
+      where: { id },
+    });
+
+    if (!current || current.deletedAt) {
+      throw new NotFoundException('Cotización no encontrada');
+    }
+
+    const now = new Date();
+    const interactionMap = {
+      sent: {
+        status: QuotationStatus.ENVIADA,
+        field: 'sentAt',
+        description: 'Cotización marcada como enviada',
+      },
+      viewed: {
+        status: QuotationStatus.VISTA,
+        field: 'viewedAt',
+        description: 'Cotización marcada como vista por el cliente',
+      },
+      accepted: {
+        status: QuotationStatus.ACEPTADA,
+        field: 'acceptedAt',
+        description: 'Cotización marcada como aceptada',
+      },
+      rejected: {
+        status: QuotationStatus.RECHAZADA,
+        field: 'rejectedAt',
+        description: 'Cotización marcada como rechazada',
+      },
+    } as const;
+
+    const interaction = interactionMap[action];
+    const nextStage = await this.pipelineService.getStageByStatus(interaction.status);
+
+    return this.prisma.quotation.update({
+      where: { id },
+      data: {
+        status: interaction.status,
+        stageId: nextStage?.id,
+        [interaction.field]: now,
+        history: {
+          create: {
+            eventType: 'QUOTATION_INTERACTION_MARKED',
+            fromStatus: current.status,
+            toStatus: interaction.status,
+            payload: { action, at: now.toISOString() },
+          },
+        },
+        activities: {
+          create: {
+            type: action === 'sent' ? ActivityType.PDF_SENT : ActivityType.EDIT,
+            description: interaction.description,
+            userId: actorUserId,
+          },
+        },
+      },
+    });
+  }
+
+  async resolveQuotationApproval(
+    id: string,
+    status: 'APPROVED' | 'REJECTED',
+    actorUserId?: string,
+  ) {
+    const current = await this.prisma.quotation.findUnique({ where: { id } });
+    if (!current || current.deletedAt) {
+      throw new NotFoundException('Cotización no encontrada');
+    }
+
+    return this.prisma.quotation.update({
+      where: { id },
+      data: {
+        approvalStatus: status,
+        approvedById: actorUserId,
+        approvalResolvedAt: new Date(),
+        history: {
+          create: {
+            eventType: 'QUOTATION_APPROVAL_UPDATED',
+            payload: { approvalStatus: status },
+          },
+        },
+        activities: {
+          create: {
+            type: ActivityType.EDIT,
+            description: status === ApprovalStatus.APPROVED ? 'Descuento aprobado' : 'Descuento rechazado',
+            userId: actorUserId,
+          },
+        },
+      },
+    });
+  }
+
+  async convertQuotationToWorkOrder(id: string, actorUserId?: string) {
+    const current = await this.prisma.quotation.findUnique({ where: { id } });
+    if (!current || current.deletedAt) {
+      throw new NotFoundException('Cotización no encontrada');
+    }
+
+    const nextStage = await this.pipelineService.getStageByStatus(QuotationStatus.EJECUTADA);
+    const workOrderNumber = current.workOrderNumber || `OT-${current.folio.replace('COT.', '')}`;
+
+    return this.prisma.quotation.update({
+      where: { id },
+      data: {
+        status: QuotationStatus.EJECUTADA,
+        stageId: nextStage?.id,
+        convertedToWorkOrderAt: new Date(),
+        workOrderNumber,
+        activities: {
+          create: {
+            type: ActivityType.EDIT,
+            description: `Cotización convertida a orden de trabajo ${workOrderNumber}`,
+            userId: actorUserId,
+          },
+        },
+        history: {
+          create: {
+            eventType: 'QUOTATION_CONVERTED_TO_WORK_ORDER',
+            fromStatus: current.status,
+            toStatus: QuotationStatus.EJECUTADA,
+            payload: { workOrderNumber },
+          },
+        },
+      },
+    });
+  }
+
   private async ensureSystemUser() {
     const user = await this.prisma.user.create({
       data: {
@@ -709,6 +1133,9 @@ export class QuotationsService {
       serviceName: string;
       categoryName: string;
       pricingProfileName: string;
+      isOptional?: boolean;
+      optionGroup?: string;
+      optionLabel?: string;
       quantity: number;
       unitPrice: number;
       totalPrice: number;
@@ -730,6 +1157,8 @@ export class QuotationsService {
     const currency = dto.currency || 'MXN';
     const configuredExchangeRate = await this.catalogService.getExchangeRate();
     const exchangeRate = dto.exchangeRate || Number(configuredExchangeRate.rate);
+    const pricingRule = this.resolvePricingRule(dto.pricingRule);
+    let catalogTotal = 0;
 
     for (const item of dto.items) {
       const service = services.find((current) => current.id === item.serviceId);
@@ -778,10 +1207,12 @@ export class QuotationsService {
       const unitPrice =
         typeof item.unitPriceOverride === 'number' && item.unitPriceOverride > 0
           ? item.unitPriceOverride
-          : catalogUnitPrice;
+          : Number((catalogUnitPrice * pricingRule.multiplier).toFixed(2));
 
       const totalPrice = unitPrice * quantity;
-      subtotal += totalPrice;
+      const catalogTotalPrice = Number((catalogUnitPrice * quantity).toFixed(2));
+      catalogTotal += catalogTotalPrice;
+      subtotal += item.isOptional ? 0 : totalPrice;
 
       itemRows.push({
         serviceId: service.id,
@@ -790,6 +1221,9 @@ export class QuotationsService {
         serviceName: service.name,
         categoryName: service.category.name,
         pricingProfileName: pricingProfile.name,
+        isOptional: item.isOptional,
+        optionGroup: item.optionGroup?.trim() || undefined,
+        optionLabel: item.optionLabel?.trim() || undefined,
         quantity,
         unitPrice,
         totalPrice,
@@ -909,6 +1343,10 @@ export class QuotationsService {
 
     const tax = Number((subtotal * 0.16).toFixed(2));
     const total = Number((subtotal + tax).toFixed(2));
+    const discountPercent = catalogTotal
+      ? Number((((catalogTotal - subtotal) / catalogTotal) * 100).toFixed(2))
+      : 0;
+    const requiresApproval = discountPercent > 10;
 
     return {
       itemRows,
@@ -918,6 +1356,10 @@ export class QuotationsService {
       total,
       currency,
       exchangeRate,
+      discountPercent,
+      requiresApproval,
+      approvalStatus: requiresApproval ? ApprovalStatus.PENDING : ApprovalStatus.NOT_REQUIRED,
+      pricingRuleLabel: pricingRule.label,
     };
   }
 
@@ -937,7 +1379,17 @@ export class QuotationsService {
       return this.defaultCommercialSections();
     }
 
-    return storedSections.map((section) => {
+    const reusableBlocks = dto.reusableBlockIds?.length
+      ? await this.prisma.reusableTextBlock.findMany({
+          where: {
+            id: { in: dto.reusableBlockIds },
+            deletedAt: null,
+          },
+          orderBy: [{ type: 'asc' }, { name: 'asc' }],
+        })
+      : [];
+
+    const sections = storedSections.map((section) => {
       if (section.title === 'Duracion de los trabajos:' && dto.durationOfWork) {
         return { ...section, content: dto.durationOfWork };
       }
@@ -952,6 +1404,14 @@ export class QuotationsService {
 
       return section;
     });
+
+    return [
+      ...sections,
+      ...reusableBlocks.map((block) => ({
+        title: `${block.type}: ${block.name}`,
+        content: block.content,
+      })),
+    ];
   }
 
   private defaultCommercialSections() {
@@ -1085,6 +1545,7 @@ export class QuotationsService {
     await this.prisma.serviceTemplate.upsert({
       where: { name: normalizedName },
       update: {
+        templateType: dto.templateType?.trim() || null,
         items: dto.items as unknown as Prisma.InputJsonValue,
         commercialSections: dto.commercialSections
           ? (dto.commercialSections as unknown as Prisma.InputJsonValue)
@@ -1096,6 +1557,7 @@ export class QuotationsService {
       },
       create: {
         name: normalizedName,
+        templateType: dto.templateType?.trim() || null,
         items: dto.items as unknown as Prisma.InputJsonValue,
         commercialSections: dto.commercialSections
           ? (dto.commercialSections as unknown as Prisma.InputJsonValue)
@@ -1130,5 +1592,47 @@ export class QuotationsService {
         create: { name: row },
       });
     }
+  }
+
+  private normalizeWorkItemName(value: string) {
+    const normalized = value.trim().replace(/\s+/g, ' ');
+
+    if (!normalized) {
+      throw new BadRequestException('El nombre del trabajo es obligatorio.');
+    }
+
+    return normalized;
+  }
+
+  private normalizeReusableTextBlock(dto: CreateReusableTextBlockDto | UpdateReusableTextBlockDto) {
+    const name = dto.name.trim();
+    const type = dto.type.trim();
+    const content = dto.content.trim();
+
+    if (!name || !type || !content) {
+      throw new BadRequestException('Nombre, tipo y contenido son obligatorios.');
+    }
+
+    return { name, type, content };
+  }
+
+  private resolvePricingRule(rule?: string | null) {
+    const normalized = (rule || 'STANDARD').trim().toUpperCase();
+
+    switch (normalized) {
+      case 'URGENT':
+        return { code: normalized, label: 'Urgencia alta (+12%)', multiplier: 1.12 };
+      case 'PREFERRED_CLIENT':
+        return { code: normalized, label: 'Cliente preferente (-5%)', multiplier: 0.95 };
+      case 'WEEKEND':
+        return { code: normalized, label: 'Trabajo en fin de semana (+8%)', multiplier: 1.08 };
+      default:
+        return { code: 'STANDARD', label: 'Tarifa estándar', multiplier: 1 };
+    }
+  }
+
+  private resolveValidUntil(validityDays?: number | null) {
+    const days = typeof validityDays === 'number' && validityDays > 0 ? validityDays : 30;
+    return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
   }
 }

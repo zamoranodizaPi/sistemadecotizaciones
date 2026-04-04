@@ -8,6 +8,7 @@ import { QuotationsModule } from './modules/quotations/quotations.module';
 import { PipelineModule } from './modules/pipeline/pipeline.module';
 import { MetricsModule } from './modules/metrics/metrics.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { AiAssistantModule } from './modules/ai-assistant/ai-assistant.module';
 
 @Module({
   imports: [
@@ -20,7 +21,7 @@ import { AuditModule } from './modules/audit/audit.module';
     PipelineModule,
     MetricsModule,
     AuditModule,
+    AiAssistantModule,
   ],
 })
 export class AppModule {}
-

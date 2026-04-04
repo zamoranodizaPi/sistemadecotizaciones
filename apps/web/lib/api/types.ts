@@ -1,11 +1,18 @@
 export type QuotationStatus =
+  | 'BORRADOR'
   | 'NUEVA'
   | 'EN_PROCESO'
   | 'ENVIADA'
+  | 'VISTA'
+  | 'NEGOCIACION'
   | 'ACEPTADA'
+  | 'RECHAZADA'
+  | 'VENCIDA'
   | 'EJECUTADA'
   | 'CUENTAS_POR_COBRAR'
   | 'PAGADA';
+
+export type ApprovalStatus = 'NOT_REQUIRED' | 'PENDING' | 'APPROVED' | 'REJECTED';
 
 export type DashboardMetricsResponse = {
   totalQuotations: number;
@@ -112,6 +119,26 @@ export type ClientResponse = Array<{
 export type QuotationListResponse = Array<{
   id: string;
   folio: string;
+  rootQuotationId?: string | null;
+  previousVersionId?: string | null;
+  serviceType?: string | null;
+  templateType?: string | null;
+  coverTitle?: string | null;
+  executiveSummary?: string | null;
+  versionNumber: number;
+  validUntil?: string | null;
+  sentAt?: string | null;
+  viewedAt?: string | null;
+  acceptedAt?: string | null;
+  rejectedAt?: string | null;
+  convertedToWorkOrderAt?: string | null;
+  workOrderNumber?: string | null;
+  pricingRule?: string | null;
+  pricingRuleLabel?: string | null;
+  discountPercent?: string | number | null;
+  requiresApproval?: boolean;
+  approvalStatus?: ApprovalStatus;
+  approvalReason?: string | null;
   title: string;
   status: QuotationStatus;
   total: string | number;
@@ -152,6 +179,12 @@ export type QuotationListResponse = Array<{
     email: string;
     role: string;
   };
+  approvedBy?: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+  } | null;
   activities?: Array<{
     id: string;
     type: ActivityType;
@@ -166,6 +199,9 @@ export type QuotationListResponse = Array<{
     serviceName: string;
     categoryName: string;
     pricingProfileName?: string | null;
+    isOptional?: boolean;
+    optionGroup?: string | null;
+    optionLabel?: string | null;
     exchangeRateUsed?: string | number | null;
     priceOriginCurrency?: string | null;
     quantity: string | number;
@@ -278,11 +314,15 @@ export type SpecialConsiderationCatalogResponse = Array<{
 export type ServiceTemplateResponse = Array<{
   id: string;
   name: string;
+  templateType?: string | null;
   items: Array<{
     serviceId: string;
     pricingProfileId: string;
     quantity: number;
     unitPriceOverride?: number;
+    isOptional?: boolean;
+    optionGroup?: string;
+    optionLabel?: string;
   }>;
   commercialSections?: Array<{
     title: string;
@@ -308,6 +348,66 @@ export type WorkItemCatalogResponse = Array<{
   createdAt: string;
   updatedAt: string;
 }>;
+
+export type WorkItemCatalogEntry = WorkItemCatalogResponse[number];
+
+export type ReusableTextBlockResponse = Array<{
+  id: string;
+  name: string;
+  type: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}>;
+
+export type AiSuggestedQuoteResponse = {
+  engine: 'openai' | 'rules' | 'local_learning';
+  ai_status:
+    | 'openai_ok'
+    | 'fallback_no_key'
+    | 'fallback_insufficient_quota'
+    | 'fallback_openai_error'
+    | 'local_rule_match';
+  detected: {
+    category: string | null;
+    service: string | null;
+    variables: Record<string, string | number>;
+  };
+  suggested_items: Array<{
+    serviceId?: string | null;
+    pricingProfileId?: string | null;
+    service: string;
+    model?: string | null;
+    quantity: number;
+    unit_price: number;
+    total: number;
+  }>;
+  historical_references: Array<{
+    id: string;
+    folio: string;
+    title: string;
+    client: string;
+    similarity: number;
+  }>;
+  confidence: number;
+  missing_fields: string[];
+  needs_review: boolean;
+  rules_applied: string[];
+};
+
+export type AiFeedbackResponse = {
+  saved: boolean;
+  ai_status: 'feedback_learned';
+  normalized_input: string;
+};
+
+export type AiCreateDealResponse = {
+  quotationId: string;
+  folio: string;
+  title: string;
+  status: QuotationStatus;
+  suggestion: AiSuggestedQuoteResponse;
+};
 
 export type AssignableUserResponse = AuthUser[];
 

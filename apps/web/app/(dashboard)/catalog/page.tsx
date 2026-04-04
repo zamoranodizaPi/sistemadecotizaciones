@@ -1,5 +1,5 @@
-import { CatalogExplorer } from '@/components/catalog/catalog-explorer';
+import { CatalogWorkspace } from '@/components/catalog/catalog-workspace';
 
 export default function CatalogPage() {
-  return <CatalogExplorer />;
+  return <CatalogWorkspace section="conceptos" />;
 }

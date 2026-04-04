@@ -19,10 +19,15 @@ export class MetricsService {
     );
     const forecast = quotations.reduce((sum, quotation) => {
       const probabilityMap: Record<string, number> = {
+        BORRADOR: 0.05,
         NUEVA: 0.1,
         EN_PROCESO: 0.3,
-        ENVIADA: 0.6,
+        ENVIADA: 0.55,
+        VISTA: 0.7,
+        NEGOCIACION: 0.82,
         ACEPTADA: 1,
+        RECHAZADA: 0,
+        VENCIDA: 0,
         EJECUTADA: 1,
         CUENTAS_POR_COBRAR: 1,
         PAGADA: 1,

@@ -36,14 +36,24 @@ function metricValue(
 
 function statusVariant(status: string) {
   switch (status) {
+    case 'BORRADOR':
+      return 'draft';
     case 'NUEVA':
       return 'new';
     case 'EN_PROCESO':
       return 'progress';
     case 'ENVIADA':
       return 'sent';
+    case 'VISTA':
+      return 'viewed';
+    case 'NEGOCIACION':
+      return 'negotiation';
     case 'ACEPTADA':
       return 'accepted';
+    case 'RECHAZADA':
+      return 'danger';
+    case 'VENCIDA':
+      return 'expired';
     case 'EJECUTADA':
       return 'executed';
     case 'CUENTAS_POR_COBRAR':

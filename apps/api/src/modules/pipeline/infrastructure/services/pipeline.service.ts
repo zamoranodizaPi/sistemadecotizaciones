@@ -8,13 +8,18 @@ const DEFAULT_STAGES: Array<{
   order: number;
   probability: number;
 }> = [
-  { name: 'Nueva', code: 'NUEVA', order: 1, probability: 0.1 },
-  { name: 'En proceso', code: 'EN_PROCESO', order: 2, probability: 0.3 },
-  { name: 'Enviada', code: 'ENVIADA', order: 3, probability: 0.6 },
-  { name: 'Aceptada', code: 'ACEPTADA', order: 4, probability: 1 },
-  { name: 'Ejecutada', code: 'EJECUTADA', order: 5, probability: 1 },
-  { name: 'Cuentas por cobrar', code: 'CUENTAS_POR_COBRAR', order: 6, probability: 1 },
-  { name: 'Pagada', code: 'PAGADA', order: 7, probability: 1 },
+  { name: 'Borrador', code: 'BORRADOR', order: 1, probability: 0.05 },
+  { name: 'Nueva', code: 'NUEVA', order: 2, probability: 0.1 },
+  { name: 'En proceso', code: 'EN_PROCESO', order: 3, probability: 0.3 },
+  { name: 'Enviada', code: 'ENVIADA', order: 4, probability: 0.55 },
+  { name: 'Vista', code: 'VISTA', order: 5, probability: 0.7 },
+  { name: 'Negociación', code: 'NEGOCIACION', order: 6, probability: 0.82 },
+  { name: 'Aceptada', code: 'ACEPTADA', order: 7, probability: 1 },
+  { name: 'Rechazada', code: 'RECHAZADA', order: 8, probability: 0 },
+  { name: 'Vencida', code: 'VENCIDA', order: 9, probability: 0 },
+  { name: 'Ejecutada', code: 'EJECUTADA', order: 10, probability: 1 },
+  { name: 'Cuentas por cobrar', code: 'CUENTAS_POR_COBRAR', order: 11, probability: 1 },
+  { name: 'Pagada', code: 'PAGADA', order: 12, probability: 1 },
 ];
 
 @Injectable()
@@ -37,28 +42,45 @@ export class PipelineService {
       },
     });
 
-    for (const stage of DEFAULT_STAGES) {
-      await this.prisma.dealStage.upsert({
-        where: {
-          pipelineId_code: {
-            pipelineId: pipeline.id,
-            code: stage.code,
-          },
-        },
-        update: {
-          name: stage.name,
-          order: stage.order,
-          probability: new Prisma.Decimal(stage.probability),
-        },
-        create: {
-          pipelineId: pipeline.id,
-          name: stage.name,
-          code: stage.code,
-          order: stage.order,
-          probability: new Prisma.Decimal(stage.probability),
-        },
+    await this.prisma.$transaction(async (tx) => {
+      const existingStages = await tx.dealStage.findMany({
+        where: { pipelineId: pipeline.id },
+        orderBy: { order: 'asc' },
       });
-    }
+
+      // Move existing rows out of the target order range first to avoid unique collisions on (pipelineId, order).
+      for (const [index, stage] of existingStages.entries()) {
+        await tx.dealStage.update({
+          where: { id: stage.id },
+          data: {
+            order: 100 + index,
+          },
+        });
+      }
+
+      for (const stage of DEFAULT_STAGES) {
+        await tx.dealStage.upsert({
+          where: {
+            pipelineId_code: {
+              pipelineId: pipeline.id,
+              code: stage.code,
+            },
+          },
+          update: {
+            name: stage.name,
+            order: stage.order,
+            probability: new Prisma.Decimal(stage.probability),
+          },
+          create: {
+            pipelineId: pipeline.id,
+            name: stage.name,
+            code: stage.code,
+            order: stage.order,
+            probability: new Prisma.Decimal(stage.probability),
+          },
+        });
+      }
+    });
 
     return this.prisma.pipeline.findUnique({
       where: { id: pipeline.id },
@@ -174,7 +196,15 @@ export class PipelineService {
       return;
     }
 
-    if (Math.abs(nextStage.order - currentStage.order) > 1) {
+    if (
+      ['RECHAZADA', 'VENCIDA', 'ACEPTADA', 'EJECUTADA', 'CUENTAS_POR_COBRAR', 'PAGADA'].includes(
+        nextStatus,
+      )
+    ) {
+      return;
+    }
+
+    if (Math.abs(nextStage.order - currentStage.order) > 2) {
       throw new Error('No se permite saltar etapas del pipeline en un solo movimiento');
     }
   }

@@ -26,6 +26,17 @@ class QuotationItemDto {
   @IsNumber()
   @Min(0)
   unitPriceOverride?: number;
+
+  @IsOptional()
+  isOptional?: boolean;
+
+  @IsOptional()
+  @IsString()
+  optionGroup?: string;
+
+  @IsOptional()
+  @IsString()
+  optionLabel?: string;
 }
 
 class CommercialSectionDto {
@@ -83,6 +94,35 @@ export class CreateQuotationDto {
 
   @IsOptional()
   @IsString()
+  coverTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  executiveSummary?: string;
+
+  @IsOptional()
+  @IsString()
+  serviceType?: string;
+
+  @IsOptional()
+  @IsString()
+  templateType?: string;
+
+  @IsOptional()
+  @IsString()
+  pricingRule?: string;
+
+  @IsOptional()
+  @IsNumber()
+  validityDays?: number;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  reusableBlockIds?: string[];
+
+  @IsOptional()
+  @IsString()
   notes?: string;
 
   @IsOptional()
@@ -122,6 +162,30 @@ export class CreateQuotationDto {
 export class UpdateQuotationCommercialDto {
   @IsOptional()
   @IsString()
+  executiveSummary?: string;
+
+  @IsOptional()
+  @IsString()
+  coverTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  serviceType?: string;
+
+  @IsOptional()
+  @IsString()
+  templateType?: string;
+
+  @IsOptional()
+  @IsString()
+  pricingRule?: string;
+
+  @IsOptional()
+  @IsNumber()
+  validityDays?: number;
+
+  @IsOptional()
+  @IsString()
   durationOfWork?: string;
 
   @IsOptional()
@@ -153,6 +217,30 @@ export class UpdateQuotationDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  coverTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  executiveSummary?: string;
+
+  @IsOptional()
+  @IsString()
+  serviceType?: string;
+
+  @IsOptional()
+  @IsString()
+  templateType?: string;
+
+  @IsOptional()
+  @IsString()
+  pricingRule?: string;
+
+  @IsOptional()
+  @IsNumber()
+  validityDays?: number;
 }
 
 export class UpdateQuotationTemplateDto {
@@ -160,6 +248,38 @@ export class UpdateQuotationTemplateDto {
   @ValidateNested({ each: true })
   @Type(() => CommercialSectionDto)
   sections!: CommercialSectionDto[];
+}
+
+export class CreateWorkItemCatalogDto {
+  @IsString()
+  name!: string;
+}
+
+export class UpdateWorkItemCatalogDto {
+  @IsString()
+  name!: string;
+}
+
+export class CreateReusableTextBlockDto {
+  @IsString()
+  name!: string;
+
+  @IsString()
+  type!: string;
+
+  @IsString()
+  content!: string;
+}
+
+export class UpdateReusableTextBlockDto {
+  @IsString()
+  name!: string;
+
+  @IsString()
+  type!: string;
+
+  @IsString()
+  content!: string;
 }
 
 export class CreateQuotationActivityDto {

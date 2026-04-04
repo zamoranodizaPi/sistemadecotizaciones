@@ -3,10 +3,14 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { Download, Eye, FileText, Filter, Search, Sparkles, Trash2 } from 'lucide-react';
 import {
+  useConvertQuotationToWorkOrder,
   useDeleteQuotation,
+  useDuplicateQuotation,
   useGeneratePdf,
   useGenerateSimplePdf,
   useClients,
+  useMarkQuotationInteraction,
+  useResolveQuotationApproval,
   useUpdateQuotation,
   useQuotations,
   useUpdateQuotationCommercial,
@@ -28,14 +32,24 @@ import { Toast } from '@/components/ui/toast';
 
 function statusVariant(status: string) {
   switch (status) {
+    case 'BORRADOR':
+      return 'draft';
     case 'NUEVA':
       return 'new';
     case 'EN_PROCESO':
       return 'progress';
     case 'ENVIADA':
       return 'sent';
+    case 'VISTA':
+      return 'viewed';
+    case 'NEGOCIACION':
+      return 'negotiation';
     case 'ACEPTADA':
       return 'accepted';
+    case 'RECHAZADA':
+      return 'danger';
+    case 'VENCIDA':
+      return 'expired';
     case 'EJECUTADA':
       return 'executed';
     case 'CUENTAS_POR_COBRAR':
@@ -76,6 +90,10 @@ export function QuotationsWorkspace() {
   const pdfMutation = useGeneratePdf();
   const simplePdfMutation = useGenerateSimplePdf();
   const deleteQuotationMutation = useDeleteQuotation();
+  const duplicateQuotationMutation = useDuplicateQuotation();
+  const interactionMutation = useMarkQuotationInteraction();
+  const resolveApprovalMutation = useResolveQuotationApproval();
+  const convertToWorkOrderMutation = useConvertQuotationToWorkOrder();
   const updateQuotationMutation = useUpdateQuotation();
   const commercialMutation = useUpdateQuotationCommercial();
 
@@ -197,6 +215,22 @@ export function QuotationsWorkspace() {
     }
   }
 
+  async function duplicateDeal(id: string) {
+    await duplicateQuotationMutation.mutateAsync(id);
+  }
+
+  async function markInteraction(id: string, action: 'sent' | 'viewed' | 'accepted' | 'rejected') {
+    await interactionMutation.mutateAsync({ id, action });
+  }
+
+  async function resolveApproval(id: string, decision: 'approve' | 'reject') {
+    await resolveApprovalMutation.mutateAsync({ id, decision });
+  }
+
+  async function convertToWorkOrder(id: string) {
+    await convertToWorkOrderMutation.mutateAsync(id);
+  }
+
   function resizeColumn(key: keyof typeof columnWidths, startX: number) {
     const initialWidth = Number(columnWidths[key] || 120);
 
@@ -290,7 +324,11 @@ export function QuotationsWorkspace() {
               <option value="NUEVA">Nueva</option>
               <option value="EN_PROCESO">En proceso</option>
               <option value="ENVIADA">Enviada</option>
+              <option value="VISTA">Vista</option>
+              <option value="NEGOCIACION">Negociación</option>
               <option value="ACEPTADA">Aceptada</option>
+              <option value="RECHAZADA">Rechazada</option>
+              <option value="VENCIDA">Vencida</option>
               <option value="PAGADA">Pagada</option>
             </Select>
             <div className="flex items-center gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel-subtle)] px-4">
@@ -348,12 +386,30 @@ export function QuotationsWorkspace() {
                 <td className="px-4 py-3 align-middle text-[var(--color-text)]">
                   <div>
                     <p className="font-medium leading-none">{quotation.folio}</p>
-                    <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">{quotation.items} conceptos</p>
+                    <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                      v{quotation.versionNumber} · {quotation.items} conceptos
+                    </p>
                   </div>
                 </td>
-                <td className="whitespace-nowrap px-4 py-3 align-middle text-[var(--color-text)]">{quotation.client}</td>
                 <td className="px-4 py-3 align-middle text-[var(--color-text)]">
-                  <Badge variant={statusVariant(quotation.status)}>{quotation.status}</Badge>
+                  <p className="whitespace-nowrap">{quotation.client}</p>
+                  <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                    {quotation.serviceType || 'Sin tipo'}{quotation.validUntil ? ` · Vigencia ${quotation.validUntil}` : ''}
+                  </p>
+                </td>
+                <td className="px-4 py-3 align-middle text-[var(--color-text)]">
+                  <div className="flex flex-col gap-1">
+                    <Badge variant={statusVariant(quotation.status)}>{quotation.status}</Badge>
+                    {quotation.requiresApproval ? (
+                      <Badge variant={quotation.approvalStatus === 'APPROVED' ? 'success' : quotation.approvalStatus === 'REJECTED' ? 'danger' : 'warning'}>
+                        {quotation.approvalStatus === 'APPROVED'
+                          ? 'Descuento aprobado'
+                          : quotation.approvalStatus === 'REJECTED'
+                            ? 'Descuento rechazado'
+                            : 'Pendiente aprobación'}
+                      </Badge>
+                    ) : null}
+                  </div>
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 align-middle text-[var(--color-text)]">{quotation.owner}</td>
                 <td className="px-4 py-3 align-middle text-[var(--color-text)]">
@@ -387,6 +443,37 @@ export function QuotationsWorkspace() {
                           Editar
                         </Button>
                       </Link>
+                    ) : null}
+                    {canEdit ? (
+                      <Button variant="secondary" size="sm" className="px-2 text-[11px]" onClick={() => duplicateDeal(quotation.id)}>
+                        <Sparkles className="h-4 w-4" />
+                        Versionar
+                      </Button>
+                    ) : null}
+                    {canEdit ? (
+                      <Button variant="ghost" size="sm" className="px-2 text-[11px]" onClick={() => markInteraction(quotation.id, 'sent')}>
+                        Enviar
+                      </Button>
+                    ) : null}
+                    {canEdit ? (
+                      <Button variant="ghost" size="sm" className="px-2 text-[11px]" onClick={() => markInteraction(quotation.id, 'viewed')}>
+                        Vista
+                      </Button>
+                    ) : null}
+                    {canEdit ? (
+                      <Button variant="ghost" size="sm" className="px-2 text-[11px]" onClick={() => markInteraction(quotation.id, 'accepted')}>
+                        Aceptar
+                      </Button>
+                    ) : null}
+                    {canEdit ? (
+                      <Button variant="ghost" size="sm" className="px-2 text-[11px]" onClick={() => convertToWorkOrder(quotation.id)}>
+                        OT
+                      </Button>
+                    ) : null}
+                    {quotation.requiresApproval && user.displayRole === 'ADMIN' ? (
+                      <Button variant="ghost" size="sm" className="px-2 text-[11px]" onClick={() => resolveApproval(quotation.id, 'approve')}>
+                        Aprobar desc.
+                      </Button>
                     ) : null}
                     {canDelete ? (
                       <Button

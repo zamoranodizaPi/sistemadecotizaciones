@@ -1,4 +1,17 @@
-import { IsObject, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsArray, IsNumber, IsObject, IsOptional, IsString, IsUUID, Min, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+
+class CreateAiDealItemDto {
+  @IsUUID()
+  serviceId!: string;
+
+  @IsUUID()
+  pricingProfileId!: string;
+
+  @IsNumber()
+  @Min(1)
+  quantity!: number;
+}
 
 export class SuggestQuoteDto {
   @IsString()
@@ -15,6 +28,17 @@ export class CreateAiDealDto {
   @IsOptional()
   @IsString()
   title?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateAiDealItemDto)
+  items?: CreateAiDealItemDto[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  workItems?: string[];
 }
 
 export class AiFeedbackDto {

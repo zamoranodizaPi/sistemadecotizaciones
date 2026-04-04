@@ -3,11 +3,13 @@ import { ActivityType, ApprovalStatus, Prisma, QuotationStatus, SpecialConsidera
 import { PrismaService } from '../../../../shared/infrastructure/prisma.service';
 import { CatalogService } from '../../../catalog/infrastructure/services/catalog.service';
 import {
+  CreateServiceCatalogDto,
   CreateReusableTextBlockDto,
   CreateWorkItemCatalogDto,
   CreateQuotationActivityDto,
   CreateQuotationDto,
   UpdateQuotationDto,
+  UpdateServiceCatalogDto,
   UpdateReusableTextBlockDto,
   UpdateWorkItemCatalogDto,
   UpdateQuotationTemplateDto,
@@ -106,14 +108,91 @@ export class QuotationsService {
   }
 
   listServiceTemplates() {
-    return this.prisma.serviceTemplate.findMany({
+    return this.prisma.serviceCatalog.findMany({
       where: { deletedAt: null },
       orderBy: { name: 'asc' },
     });
   }
 
+  async createServiceTemplate(dto: CreateServiceCatalogDto) {
+    const name = dto.name.trim();
+    if (!name) {
+      throw new BadRequestException('El nombre del servicio es obligatorio.');
+    }
+
+    const existing = await this.prisma.serviceCatalog.findUnique({
+      where: { name },
+    });
+
+    if (existing && existing.deletedAt === null) {
+      throw new ConflictException('Ya existe un servicio con ese nombre.');
+    }
+
+    const data = {
+      name,
+      templateType: dto.templateType?.trim() || null,
+      items: dto.items as unknown as Prisma.InputJsonValue,
+      commercialSections: this.buildActivitySections(dto.activityNames) as Prisma.InputJsonValue,
+      specialConsiderations: Prisma.JsonNull,
+      deletedAt: null,
+    };
+
+    if (existing) {
+      return this.prisma.serviceCatalog.update({
+        where: { id: existing.id },
+        data,
+      });
+    }
+
+    return this.prisma.serviceCatalog.create({ data });
+  }
+
+  async updateServiceTemplate(id: string, dto: UpdateServiceCatalogDto) {
+    const existing = await this.prisma.serviceCatalog.findFirst({
+      where: { id, deletedAt: null },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('El servicio solicitado ya no existe.');
+    }
+
+    const name = dto.name.trim();
+    const duplicated = await this.prisma.serviceCatalog.findUnique({
+      where: { name },
+    });
+
+    if (duplicated && duplicated.id !== id && duplicated.deletedAt === null) {
+      throw new ConflictException('Ya existe otro servicio con ese nombre.');
+    }
+
+    return this.prisma.serviceCatalog.update({
+      where: { id },
+      data: {
+        name,
+        templateType: dto.templateType?.trim() || null,
+        items: dto.items as unknown as Prisma.InputJsonValue,
+        commercialSections: this.buildActivitySections(dto.activityNames) as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  async deleteServiceTemplate(id: string) {
+    const existing = await this.prisma.serviceCatalog.findFirst({
+      where: { id, deletedAt: null },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('El servicio solicitado ya no existe.');
+    }
+
+    return this.prisma.serviceCatalog.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+  }
+
   listWorkItemCatalog() {
-    return this.prisma.workItemCatalog.findMany({
+    return this.prisma.activityCatalog.findMany({
       where: { deletedAt: null },
       orderBy: { name: 'asc' },
     });
@@ -128,7 +207,7 @@ export class QuotationsService {
 
   async createWorkItemCatalog(dto: CreateWorkItemCatalogDto) {
     const name = this.normalizeWorkItemName(dto.name);
-    const existing = await this.prisma.workItemCatalog.findUnique({
+    const existing = await this.prisma.activityCatalog.findUnique({
       where: { name },
     });
 
@@ -137,19 +216,19 @@ export class QuotationsService {
     }
 
     if (existing) {
-      return this.prisma.workItemCatalog.update({
+      return this.prisma.activityCatalog.update({
         where: { id: existing.id },
         data: { name, deletedAt: null },
       });
     }
 
-    return this.prisma.workItemCatalog.create({
+    return this.prisma.activityCatalog.create({
       data: { name },
     });
   }
 
   async updateWorkItemCatalog(id: string, dto: UpdateWorkItemCatalogDto) {
-    const existing = await this.prisma.workItemCatalog.findFirst({
+    const existing = await this.prisma.activityCatalog.findFirst({
       where: { id, deletedAt: null },
     });
 
@@ -158,7 +237,7 @@ export class QuotationsService {
     }
 
     const name = this.normalizeWorkItemName(dto.name);
-    const duplicated = await this.prisma.workItemCatalog.findUnique({
+    const duplicated = await this.prisma.activityCatalog.findUnique({
       where: { name },
     });
 
@@ -170,14 +249,14 @@ export class QuotationsService {
       throw new ConflictException('Ya existe un trabajo archivado con ese nombre.');
     }
 
-    return this.prisma.workItemCatalog.update({
+    return this.prisma.activityCatalog.update({
       where: { id },
       data: { name },
     });
   }
 
   async deleteWorkItemCatalog(id: string) {
-    const existing = await this.prisma.workItemCatalog.findFirst({
+    const existing = await this.prisma.activityCatalog.findFirst({
       where: { id, deletedAt: null },
     });
 
@@ -185,7 +264,7 @@ export class QuotationsService {
       throw new NotFoundException('El trabajo solicitado ya no existe.');
     }
 
-    return this.prisma.workItemCatalog.update({
+    return this.prisma.activityCatalog.update({
       where: { id },
       data: { deletedAt: new Date() },
     });
@@ -755,8 +834,8 @@ export class QuotationsService {
         currency: quotation.currency,
       },
       items: quotation.items.map((item) => ({
-        serviceCode: item.serviceCode,
-        serviceName: item.serviceName,
+        serviceCode: item.supplyCode,
+        serviceName: item.supplyName,
         quantity: item.quantity.toString(),
         unitPrice: item.unitPrice.toString(),
         totalPrice: item.totalPrice.toString(),
@@ -819,8 +898,8 @@ export class QuotationsService {
         currency: quotation.currency,
       },
       items: quotation.items.map((item) => ({
-        serviceCode: item.serviceCode,
-        serviceName: item.serviceName,
+        serviceCode: item.supplyCode,
+        serviceName: item.supplyName,
         quantity: item.quantity.toString(),
         unitPrice: item.unitPrice.toString(),
         totalPrice: item.totalPrice.toString(),
@@ -922,10 +1001,10 @@ export class QuotationsService {
         createdById: actorUserId || quotation.createdById,
         items: {
           create: quotation.items.map((item) => ({
-            serviceId: item.serviceId || undefined,
+            supplyId: item.supplyId || undefined,
             pricingProfileId: item.pricingProfileId || undefined,
-            serviceCode: item.serviceCode,
-            serviceName: item.serviceName,
+            supplyCode: item.supplyCode,
+            supplyName: item.supplyName,
             categoryName: item.categoryName,
             pricingProfileName: item.pricingProfileName,
             isOptional: item.isOptional,
@@ -1118,19 +1197,19 @@ export class QuotationsService {
   }
 
   private async buildPricingPayload(dto: CreateQuotationDto) {
-    const services = await this.prisma.service.findMany({
+    const supplies = await this.prisma.supply.findMany({
       where: { id: { in: dto.items.map((item) => item.serviceId) } },
       include: { category: true },
     });
-    const pricingProfiles = await this.prisma.servicePricingProfile.findMany({
+    const pricingProfiles = await this.prisma.supplyPricingProfile.findMany({
       where: { id: { in: dto.items.map((item) => item.pricingProfileId) } },
     });
 
     const itemRows: Array<{
-      serviceId?: string;
+      supplyId?: string;
       pricingProfileId?: string;
-      serviceCode: string;
-      serviceName: string;
+      supplyCode: string;
+      supplyName: string;
       categoryName: string;
       pricingProfileName: string;
       isOptional?: boolean;
@@ -1161,18 +1240,18 @@ export class QuotationsService {
     let catalogTotal = 0;
 
     for (const item of dto.items) {
-      const service = services.find((current) => current.id === item.serviceId);
-      if (!service) {
+      const supply = supplies.find((current) => current.id === item.serviceId);
+      if (!supply) {
         throw new NotFoundException(`Servicio ${item.serviceId} no encontrado`);
       }
 
       const pricingProfile = pricingProfiles.find(
         (current) =>
-          current.id === item.pricingProfileId && current.serviceId === item.serviceId,
+          current.id === item.pricingProfileId && current.supplyId === item.serviceId,
       );
       if (!pricingProfile) {
         throw new NotFoundException(
-          `Perfil de precio ${item.pricingProfileId} no encontrado para ${service.code}`,
+          `Perfil de precio ${item.pricingProfileId} no encontrado para ${supply.code}`,
         );
       }
 
@@ -1200,7 +1279,7 @@ export class QuotationsService {
 
       if (!catalogUnitPrice) {
         throw new NotFoundException(
-          `Servicio ${service.code} sin precio configurado en ${currency}`,
+          `Suministro ${supply.code} sin precio configurado en ${currency}`,
         );
       }
 
@@ -1215,11 +1294,11 @@ export class QuotationsService {
       subtotal += item.isOptional ? 0 : totalPrice;
 
       itemRows.push({
-        serviceId: service.id,
+        supplyId: supply.id,
         pricingProfileId: pricingProfile.id,
-        serviceCode: service.code,
-        serviceName: service.name,
-        categoryName: service.category.name,
+        supplyCode: supply.code,
+        supplyName: supply.name,
+        categoryName: supply.category.name,
         pricingProfileName: pricingProfile.name,
         isOptional: item.isOptional,
         optionGroup: item.optionGroup?.trim() || undefined,
@@ -1251,8 +1330,8 @@ export class QuotationsService {
             sortOrder: consideration.sortOrder ?? index,
           });
           itemRows.push({
-            serviceCode: 'ADICIONAL',
-            serviceName: concept || `Adicional ${percentage}%`,
+            supplyCode: 'ADICIONAL',
+            supplyName: concept || `Adicional ${percentage}%`,
             categoryName: 'Consideraciones especiales',
             pricingProfileName: `${percentage}%`,
             quantity: 1,
@@ -1290,8 +1369,8 @@ export class QuotationsService {
           sortOrder: consideration.sortOrder ?? index,
         });
         itemRows.push({
-          serviceCode: 'ADICIONAL',
-          serviceName: concept || 'Consideración especial',
+          supplyCode: 'ADICIONAL',
+          supplyName: concept || 'Consideración especial',
           categoryName: 'Consideraciones especiales',
           pricingProfileName: 'Monto fijo',
           quantity,
@@ -1327,8 +1406,8 @@ export class QuotationsService {
         sortOrder: consideration.sortOrder ?? index,
       });
       itemRows.push({
-        serviceCode: 'VIATICOS',
-        serviceName: consideration.location?.trim()
+        supplyCode: 'VIATICOS',
+        supplyName: consideration.location?.trim()
           ? consideration.location.trim()
           : 'Sin descripción',
         categoryName: 'Viáticos',
@@ -1542,7 +1621,7 @@ export class QuotationsService {
       return;
     }
 
-    await this.prisma.serviceTemplate.upsert({
+    await this.prisma.serviceCatalog.upsert({
       where: { name: normalizedName },
       update: {
         templateType: dto.templateType?.trim() || null,
@@ -1569,6 +1648,20 @@ export class QuotationsService {
     });
   }
 
+  private buildActivitySections(activityNames?: string[]) {
+    const activities = (activityNames || []).map((item) => item.trim()).filter(Boolean);
+    if (!activities.length) {
+      return Prisma.JsonNull;
+    }
+
+    return [
+      {
+        title: 'Trabajos a realizar:',
+        content: activities.join('\n'),
+      },
+    ];
+  }
+
   private async syncWorkItemCatalog(
     sections: Array<{ title: string; content: string }>,
   ) {
@@ -1586,7 +1679,7 @@ export class QuotationsService {
       .filter(Boolean);
 
     for (const row of rows) {
-      await this.prisma.workItemCatalog.upsert({
+      await this.prisma.activityCatalog.upsert({
         where: { name: row },
         update: { deletedAt: null },
         create: { name: row },

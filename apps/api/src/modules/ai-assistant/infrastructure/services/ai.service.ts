@@ -28,11 +28,13 @@ export class AiService {
       history?: string;
     },
   ): Promise<ParsedIntent> {
+    const heuristic = this.parseWithRules(text, 'fallback_no_key');
     const apiKey = this.configService.get<string>('OPENAI_API_KEY');
 
     if (apiKey) {
       try {
-        return await this.parseWithOpenAi(text, apiKey, context);
+        const openAiResult = await this.parseWithOpenAi(text, apiKey, context);
+        return this.mergeParsedIntent(heuristic, openAiResult);
       } catch (error) {
         console.error('AI parse fallback:', error);
         return this.parseWithRules(
@@ -44,7 +46,7 @@ export class AiService {
       }
     }
 
-    return this.parseWithRules(text, 'fallback_no_key');
+    return heuristic;
   }
 
   private async parseWithOpenAi(
@@ -153,20 +155,9 @@ export class AiService {
       .replace(/[\u0300-\u036f]/g, '')
       .toLowerCase();
 
-    const category =
-      ['ccm', 'swbg', 'switchgear', 'tablero', 'subestacion', 'relevador', 'transformador'].find((entry) =>
-        normalized.includes(entry),
-      ) || null;
+    const category = this.detectCategory(normalized);
 
-    const service =
-      [
-        'pruebas completas',
-        'pruebas',
-        'configuracion',
-        'mantenimiento',
-        'diagnostico',
-        'puesta en marcha',
-      ].find((entry) => normalized.includes(entry)) || null;
+    const service = this.detectService(normalized);
 
     const quantityMatch =
       normalized.match(/(\d+)\s*(secciones|tableros|celdas|interruptores|equipos)/) ||
@@ -175,6 +166,15 @@ export class AiService {
     const variables: Record<string, number | string> = {};
     if (quantityMatch) {
       variables[quantityMatch[2].startsWith('seccion') ? 'secciones' : quantityMatch[2]] = Number(quantityMatch[1]);
+    }
+    if (normalized.includes('tablero')) {
+      variables.equipo = 'tablero';
+    }
+    if (category) {
+      variables.modelo = category;
+    }
+    if (service) {
+      variables.tipo_servicio = service;
     }
 
     const keywords = Array.from(
@@ -190,14 +190,87 @@ export class AiService {
       .filter((entry) => normalized.includes(entry));
 
     return {
-      category: category?.toUpperCase() || null,
+      category,
       service,
       variables,
       keywords,
       qualifiers,
-      confidence: category || service ? 0.72 : 0.45,
+      confidence: category && service ? 0.84 : category || service ? 0.72 : 0.45,
       engine: 'rules',
       aiStatus,
     };
+  }
+
+  private mergeParsedIntent(base: ParsedIntent, incoming: ParsedIntent): ParsedIntent {
+    return {
+      category: incoming.category || base.category,
+      service: incoming.service || base.service,
+      variables: {
+        ...base.variables,
+        ...Object.fromEntries(
+          Object.entries(incoming.variables || {}).filter(([, value]) => value !== null && value !== undefined && value !== ''),
+        ),
+      },
+      keywords: Array.from(new Set([...base.keywords, ...(incoming.keywords || [])])),
+      qualifiers: Array.from(new Set([...base.qualifiers, ...(incoming.qualifiers || [])])),
+      confidence: Math.max(base.confidence, incoming.confidence || 0),
+      engine: incoming.engine,
+      aiStatus: incoming.aiStatus,
+    };
+  }
+
+  private detectCategory(normalized: string) {
+    if (normalized.includes('minigear')) {
+      return 'SWBG';
+    }
+    if (/\bccm\b/.test(normalized) || normalized.includes('centro de control de motores')) {
+      return 'CCM';
+    }
+    if (/\bswbg\b/.test(normalized) || normalized.includes('switchgear')) {
+      return 'SWBG';
+    }
+    if (normalized.includes('metalc')) {
+      return 'METALC';
+    }
+    if (normalized.includes('base')) {
+      return 'BASE';
+    }
+    if (normalized.includes('tablero')) {
+      return 'TABLERO';
+    }
+    if (normalized.includes('subestacion')) {
+      return 'SUBESTACION';
+    }
+
+    return null;
+  }
+
+  private detectService(normalized: string) {
+    if (normalized.includes('pruebas y puesta en marcha')) {
+      return 'pruebas y puesta en marcha';
+    }
+    if (normalized.includes('pruebas completas')) {
+      return 'pruebas completas';
+    }
+    if (normalized.includes('puesta en marcha')) {
+      return 'puesta en marcha';
+    }
+    if (normalized.includes('pruebas')) {
+      return 'pruebas';
+    }
+    if (normalized.includes('configuracion') || normalized.includes('configurar')) {
+      return 'configuracion';
+    }
+    if (normalized.includes('mantenimiento')) {
+      return 'mantenimiento';
+    }
+    if (normalized.includes('diagnostico')) {
+      return 'diagnostico';
+    }
+    if (normalized.includes('puesta en marcha')) {
+      return 'puesta en marcha';
+    }
+
+    return null;
   }
 }

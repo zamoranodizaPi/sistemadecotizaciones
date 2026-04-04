@@ -104,12 +104,12 @@ model Category {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
-  services    Service[]
+  supplies    Supply[]
 
   @@index([deletedAt])
 }
 
-model Service {
+model Supply {
   id          String         @id @default(uuid())
   categoryId  String
   code        String         @unique
@@ -121,29 +121,31 @@ model Service {
   updatedAt   DateTime       @updatedAt
   deletedAt   DateTime?
   category    Category       @relation(fields: [categoryId], references: [id])
-  prices      ServicePrice[]
-  pricingProfiles ServicePricingProfile[]
+  prices      SupplyPrice[]
+  pricingProfiles SupplyPricingProfile[]
   items       QuotationItem[]
 
   @@index([categoryId, deletedAt])
+  @@map("Service")
 }
 
-model ServicePrice {
+model SupplyPrice {
   id         String    @id @default(uuid())
-  serviceId  String
+  supplyId   String    @map("serviceId")
   price      Decimal   @db.Decimal(12, 2)
   validFrom  DateTime
   validTo    DateTime?
   source     String
   createdAt  DateTime  @default(now())
-  service    Service   @relation(fields: [serviceId], references: [id])
+  supply     Supply    @relation(fields: [supplyId], references: [id])
 
-  @@index([serviceId, validFrom, validTo])
+  @@index([supplyId, validFrom, validTo])
+  @@map("ServicePrice")
 }
 
-model ServicePricingProfile {
+model SupplyPricingProfile {
   id             String       @id @default(uuid())
-  serviceId      String
+  supplyId       String       @map("serviceId")
   code           String
   name           String
   sortOrder      Int          @default(0)
@@ -151,15 +153,16 @@ model ServicePricingProfile {
   usdPrice       Decimal?     @db.Decimal(12, 2)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
-  service        Service      @relation(fields: [serviceId], references: [id])
+  supply         Supply       @relation(fields: [supplyId], references: [id])
   quotationItems QuotationItem[]
-  versions       ServicePricingProfileVersion[]
+  versions       SupplyPricingProfileVersion[]
 
-  @@unique([serviceId, code, name])
-  @@index([serviceId])
+  @@unique([supplyId, code, name])
+  @@index([supplyId])
+  @@map("ServicePricingProfile")
 }
 
-model ServicePricingProfileVersion {
+model SupplyPricingProfileVersion {
   id               String                @id @default(uuid())
   pricingProfileId String
   mxnPrice         Decimal?              @db.Decimal(12, 2)
@@ -168,10 +171,11 @@ model ServicePricingProfileVersion {
   validTo          DateTime?
   source           String
   createdAt        DateTime              @default(now())
-  pricingProfile   ServicePricingProfile @relation(fields: [pricingProfileId], references: [id])
+  pricingProfile   SupplyPricingProfile  @relation(fields: [pricingProfileId], references: [id])
 
   @@unique([pricingProfileId, validFrom])
   @@index([pricingProfileId, validFrom, validTo])
+  @@map("ServicePricingProfileVersion")
 }
 
 model ExchangeRateSetting {
@@ -324,7 +328,7 @@ model QuotationTemplateSetting {
   updatedAt    DateTime @updatedAt
 }
 
-model ServiceTemplate {
+model ServiceCatalog {
   id                    String   @id @default(uuid())
   name                  String   @unique
   templateType          String?
@@ -336,9 +340,10 @@ model ServiceTemplate {
   deletedAt             DateTime?
 
   @@index([deletedAt])
+  @@map("ServiceTemplate")
 }
 
-model WorkItemCatalog {
+model ActivityCatalog {
   id        String   @id @default(uuid())
   name      String   @unique
   createdAt DateTime @default(now())
@@ -346,6 +351,7 @@ model WorkItemCatalog {
   deletedAt DateTime?
 
   @@index([deletedAt])
+  @@map("WorkItemCatalog")
 }
 
 model ReusableTextBlock {
@@ -364,10 +370,10 @@ model ReusableTextBlock {
 model QuotationItem {
   id                String    @id @default(uuid())
   quotationId       String
-  serviceId         String?
+  supplyId          String?   @map("serviceId")
   pricingProfileId  String?
-  serviceCode       String
-  serviceName       String
+  supplyCode        String    @map("serviceCode")
+  supplyName        String    @map("serviceName")
   categoryName      String
   pricingProfileName String?
   isOptional        Boolean   @default(false)
@@ -380,8 +386,8 @@ model QuotationItem {
   priceOriginCurrency String?
   priceVersionId    String?
   quotation         Quotation @relation(fields: [quotationId], references: [id])
-  service           Service?  @relation(fields: [serviceId], references: [id])
-  pricingProfile    ServicePricingProfile? @relation(fields: [pricingProfileId], references: [id])
+  supply            Supply?   @relation(fields: [supplyId], references: [id])
+  pricingProfile    SupplyPricingProfile? @relation(fields: [pricingProfileId], references: [id])
 
   @@index([quotationId])
 }
@@ -442,4 +448,20 @@ model AiFeedback {
   createdAt           DateTime @default(now())
 
   @@index([normalizedInput, createdAt])
+}
+
+model DetectedCatalogService {
+  id                String   @id @default(uuid())
+  name              String
+  normalizedName    String   @unique
+  suggestedCategory String?
+  sourceInput       String?
+  confidence        Float    @default(0.7)
+  usageCount        Int      @default(1)
+  status            String   @default("PENDING")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([suggestedCategory, status])
 }

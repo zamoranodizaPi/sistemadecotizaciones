@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, ServicePrice } from '@prisma/client';
+import { Prisma, SupplyPrice } from '@prisma/client';
 import * as XLSX from 'xlsx';
 import { PrismaService } from '../../../../shared/infrastructure/prisma.service';
 import {
@@ -32,7 +32,7 @@ export class CatalogService {
     return this.prisma.category.findMany({
       where: { deletedAt: null },
       include: {
-        services: {
+        supplies: {
           where: { deletedAt: null },
           include: {
             prices: {
@@ -53,6 +53,20 @@ export class CatalogService {
         },
       },
       orderBy: { name: 'asc' },
+    });
+  }
+
+  listDetectedServices() {
+    return this.prisma.detectedCatalogService.findMany({
+      where: { status: 'PENDING' },
+      orderBy: [{ usageCount: 'desc' }, { updatedAt: 'desc' }],
+    });
+  }
+
+  async updateDetectedServiceStatus(id: string, status: 'PENDING' | 'APPROVED' | 'DISMISSED') {
+    return this.prisma.detectedCatalogService.update({
+      where: { id },
+      data: { status },
     });
   }
 
@@ -126,12 +140,12 @@ export class CatalogService {
             },
           });
 
-      const existingService = await tx.service.findUnique({
+      const existingService = await tx.supply.findUnique({
         where: { code: serviceCode },
       });
 
       const service = existingService
-        ? await tx.service.update({
+        ? await tx.supply.update({
             where: { id: existingService.id },
             data: {
               code: serviceCode,
@@ -143,7 +157,7 @@ export class CatalogService {
               deletedAt: null,
             },
           })
-        : await tx.service.create({
+        : await tx.supply.create({
             data: {
               code: serviceCode,
               name: dto.name,
@@ -158,8 +172,8 @@ export class CatalogService {
         return { service, price: null, versioned: false };
       }
 
-      const activePrice = await tx.servicePrice.findFirst({
-        where: { serviceId: service.id, validTo: null },
+      const activePrice = await tx.supplyPrice.findFirst({
+        where: { supplyId: service.id, validTo: null },
         orderBy: { validFrom: 'desc' },
       });
 
@@ -168,15 +182,15 @@ export class CatalogService {
       }
 
       if (activePrice) {
-        await tx.servicePrice.update({
+        await tx.supplyPrice.update({
           where: { id: activePrice.id },
           data: { validTo: new Date() },
         });
       }
 
-      const nextPrice = await tx.servicePrice.create({
+      const nextPrice = await tx.supplyPrice.create({
         data: {
-          serviceId: service.id,
+          supplyId: service.id,
           price: dto.price,
           validFrom: new Date(),
           source: dto.source || 'manual',
@@ -188,7 +202,7 @@ export class CatalogService {
   }
 
   async updateService(serviceId: string, dto: UpdateServiceDto) {
-    const existing = await this.prisma.service.findUnique({
+    const existing = await this.prisma.supply.findUnique({
       where: { id: serviceId },
     });
 
@@ -196,7 +210,7 @@ export class CatalogService {
       throw new NotFoundException('Servicio no encontrado');
     }
 
-    return this.prisma.service.update({
+    return this.prisma.supply.update({
       where: { id: serviceId },
       data: {
         code: dto.code.trim().toUpperCase(),
@@ -209,7 +223,7 @@ export class CatalogService {
   }
 
   async cloneService(serviceId: string, dto: CloneServiceDto) {
-    const source = await this.prisma.service.findUnique({
+    const source = await this.prisma.supply.findUnique({
       where: { id: serviceId },
       include: {
         pricingProfiles: {
@@ -237,7 +251,7 @@ export class CatalogService {
           throw new NotFoundException('Categoria destino no encontrada');
         }
 
-        const service = await tx.service.create({
+        const service = await tx.supply.create({
           data: {
             categoryId: category.id,
             code: dto.code.trim().toUpperCase(),
@@ -249,9 +263,9 @@ export class CatalogService {
         });
 
         if (source.pricingProfiles.length) {
-          await tx.servicePricingProfile.createMany({
+          await tx.supplyPricingProfile.createMany({
             data: source.pricingProfiles.map((profile) => ({
-              serviceId: service.id,
+              supplyId: service.id,
               code: profile.code,
               name: profile.name,
               sortOrder: profile.sortOrder,
@@ -263,9 +277,9 @@ export class CatalogService {
 
         const activePrice = source.prices[0];
         if (activePrice) {
-          await tx.servicePrice.create({
+          await tx.supplyPrice.create({
             data: {
-              serviceId: service.id,
+              supplyId: service.id,
               price: activePrice.price,
               validFrom: new Date(),
               source: 'service-clone',
@@ -273,7 +287,7 @@ export class CatalogService {
           });
         }
 
-        return tx.service.findUnique({
+        return tx.supply.findUnique({
           where: { id: service.id },
           include: {
             pricingProfiles: {
@@ -312,7 +326,7 @@ export class CatalogService {
   }
 
   async deleteService(serviceId: string) {
-    const service = await this.prisma.service.findUnique({
+    const service = await this.prisma.supply.findUnique({
       where: { id: serviceId },
       select: { id: true },
     });
@@ -321,7 +335,7 @@ export class CatalogService {
       throw new NotFoundException('Servicio no encontrado');
     }
 
-    return this.prisma.service.update({
+    return this.prisma.supply.update({
       where: { id: serviceId },
       data: {
         deletedAt: new Date(),
@@ -340,7 +354,7 @@ export class CatalogService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      await tx.service.updateMany({
+      await tx.supply.updateMany({
         where: { categoryId, deletedAt: null },
         data: { deletedAt: new Date() },
       });
@@ -358,7 +372,7 @@ export class CatalogService {
     const now = new Date();
 
     await this.prisma.$transaction([
-      this.prisma.service.updateMany({
+      this.prisma.supply.updateMany({
         where: { deletedAt: null },
         data: { deletedAt: now },
       }),
@@ -371,9 +385,9 @@ export class CatalogService {
     return { cleared: true };
   }
 
-  async resolveActivePrice(serviceId: string): Promise<ServicePrice | null> {
-    return this.prisma.servicePrice.findFirst({
-      where: { serviceId, validTo: null },
+  async resolveActivePrice(serviceId: string): Promise<SupplyPrice | null> {
+    return this.prisma.supplyPrice.findFirst({
+      where: { supplyId: serviceId, validTo: null },
       orderBy: { validFrom: 'desc' },
     });
   }
@@ -383,7 +397,7 @@ export class CatalogService {
   }
 
   async updatePricingProfiles(dto: UpdatePricingProfilesDto) {
-    const service = await this.prisma.service.findUnique({
+    const service = await this.prisma.supply.findUnique({
       where: { id: dto.serviceId },
       select: { id: true },
     });
@@ -425,14 +439,14 @@ export class CatalogService {
           let pricingProfileId = profile.id;
 
           if (pricingProfileId) {
-            await tx.servicePricingProfile.update({
+            await tx.supplyPricingProfile.update({
               where: { id: profile.id },
               data,
             });
           } else {
-            const existingProfile = await tx.servicePricingProfile.findFirst({
+            const existingProfile = await tx.supplyPricingProfile.findFirst({
               where: {
-                serviceId: dto.serviceId,
+                supplyId: dto.serviceId,
                 code: normalizedCode,
                 name: normalizedName,
               },
@@ -441,14 +455,14 @@ export class CatalogService {
 
             if (existingProfile) {
               pricingProfileId = existingProfile.id;
-              await tx.servicePricingProfile.update({
+              await tx.supplyPricingProfile.update({
                 where: { id: existingProfile.id },
                 data,
               });
             } else {
-              const createdProfile = await tx.servicePricingProfile.create({
+              const createdProfile = await tx.supplyPricingProfile.create({
                 data: {
-                  serviceId: dto.serviceId,
+                  supplyId: dto.serviceId,
                   ...data,
                 },
                 select: { id: true },
@@ -478,7 +492,7 @@ export class CatalogService {
           });
         }
 
-        const serviceRecord = await tx.service.findUnique({
+        const serviceRecord = await tx.supply.findUnique({
           where: { id: dto.serviceId },
           include: {
             pricingProfiles: {
@@ -618,7 +632,7 @@ export class CatalogService {
     const categories = await this.prisma.category.findMany({
       where: { deletedAt: null },
       include: {
-        services: {
+        supplies: {
           where: { deletedAt: null },
           include: {
             pricingProfiles: {
@@ -639,9 +653,9 @@ export class CatalogService {
     const workbook = XLSX.utils.book_new();
 
     for (const category of categories) {
-      const groups = new Map<string, typeof category.services>();
+      const groups = new Map<string, typeof category.supplies>();
 
-      for (const service of category.services) {
+      for (const service of category.supplies) {
         const signature = service.pricingProfiles
           .map((profile) => `${profile.code}::${profile.name}`)
           .join('|');
@@ -762,7 +776,7 @@ export class CatalogService {
       source: string;
     },
   ) {
-    const sameDateVersion = await tx.servicePricingProfileVersion.findUnique({
+    const sameDateVersion = await tx.supplyPricingProfileVersion.findUnique({
       where: {
         pricingProfileId_validFrom: {
           pricingProfileId: input.pricingProfileId,
@@ -777,7 +791,7 @@ export class CatalogService {
       typeof input.usdPrice === 'number' ? new Prisma.Decimal(input.usdPrice) : null;
 
     if (sameDateVersion) {
-      const updateData: Prisma.ServicePricingProfileVersionUpdateInput = {};
+      const updateData: Prisma.SupplyPricingProfileVersionUpdateInput = {};
 
       if (
         this.decimalChanged(sameDateVersion.mxnPrice, mxnDecimal)
@@ -796,7 +810,7 @@ export class CatalogService {
       }
 
       if (Object.keys(updateData).length) {
-        await tx.servicePricingProfileVersion.update({
+        await tx.supplyPricingProfileVersion.update({
           where: { id: sameDateVersion.id },
           data: updateData,
         });
@@ -809,7 +823,7 @@ export class CatalogService {
       };
     }
 
-    const previousVersion = await tx.servicePricingProfileVersion.findFirst({
+    const previousVersion = await tx.supplyPricingProfileVersion.findFirst({
       where: {
         pricingProfileId: input.pricingProfileId,
         validFrom: { lt: input.validFrom },
@@ -817,7 +831,7 @@ export class CatalogService {
       orderBy: { validFrom: 'desc' },
     });
 
-    const nextVersion = await tx.servicePricingProfileVersion.findFirst({
+    const nextVersion = await tx.supplyPricingProfileVersion.findFirst({
       where: {
         pricingProfileId: input.pricingProfileId,
         validFrom: { gt: input.validFrom },
@@ -829,13 +843,13 @@ export class CatalogService {
       previousVersion &&
       (!previousVersion.validTo || previousVersion.validTo.getTime() !== input.validFrom.getTime())
     ) {
-      await tx.servicePricingProfileVersion.update({
+      await tx.supplyPricingProfileVersion.update({
         where: { id: previousVersion.id },
         data: { validTo: input.validFrom },
       });
     }
 
-    await tx.servicePricingProfileVersion.create({
+    await tx.supplyPricingProfileVersion.create({
       data: {
         pricingProfileId: input.pricingProfileId,
         mxnPrice: mxnDecimal,
@@ -857,7 +871,7 @@ export class CatalogService {
     tx: Prisma.TransactionClient,
     pricingProfileId: string,
   ) {
-    const openVersion = await tx.servicePricingProfileVersion.findFirst({
+    const openVersion = await tx.supplyPricingProfileVersion.findFirst({
       where: {
         pricingProfileId,
         validTo: null,
@@ -869,7 +883,7 @@ export class CatalogService {
       return;
     }
 
-    await tx.servicePricingProfile.update({
+    await tx.supplyPricingProfile.update({
       where: { id: pricingProfileId },
       data: {
         mxnPrice: openVersion.mxnPrice,

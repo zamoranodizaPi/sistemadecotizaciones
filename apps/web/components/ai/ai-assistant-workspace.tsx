@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, Bot, BriefcaseBusiness, PencilLine, Save, Sparkles } from 'lucide-react';
+import { AlertTriangle, Bot, BriefcaseBusiness, PencilLine, Save, Sparkles, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   useAiCreateDeal,
@@ -27,6 +27,17 @@ type DraftSuggestion = {
   service: string;
   variables: Array<{ key: string; value: string }>;
   suggestedServices: Array<{ value: string }>;
+  selectedItems: Array<{
+    serviceId?: string | null;
+    pricingProfileId?: string | null;
+    service: string;
+    model?: string | null;
+    quantity: number;
+    unit_price: number;
+    total: number;
+  }>;
+  workItems: Array<{ value: string }>;
+  feedbackNotes: string;
 };
 
 function toDraft(data: AiSuggestedQuoteResponse): DraftSuggestion {
@@ -40,6 +51,11 @@ function toDraft(data: AiSuggestedQuoteResponse): DraftSuggestion {
     suggestedServices: data.suggested_items.length
       ? data.suggested_items.map((item) => ({ value: item.service }))
       : [{ value: '' }],
+    selectedItems: data.suggested_items,
+    workItems: data.suggested_work_items.length
+      ? data.suggested_work_items.map((item) => ({ value: item }))
+      : [{ value: '' }],
+    feedbackNotes: '',
   };
 }
 
@@ -97,6 +113,14 @@ export function AiAssistantWorkspace() {
       const result = await createDealMutation.mutateAsync({
         text: text.trim(),
         clientId,
+        items: draft?.selectedItems
+          .filter((item) => item.serviceId && item.pricingProfileId)
+          .map((item) => ({
+            serviceId: item.serviceId as string,
+            pricingProfileId: item.pricingProfileId as string,
+            quantity: item.quantity,
+          })),
+        workItems: draft?.workItems.map((item) => item.value.trim()).filter(Boolean),
       });
 
       setToastMessage({
@@ -142,6 +166,12 @@ export function AiAssistantWorkspace() {
           service: draft.service.trim() || null,
           variables,
           suggested_services: suggestedServices,
+          selected_items: draft.selectedItems.map((item) => ({
+            service: item.service,
+            quantity: item.quantity,
+          })),
+          suggested_work_items: draft.workItems.map((item) => item.value.trim()).filter(Boolean),
+          notes: draft.feedbackNotes.trim() || null,
           confidence: Math.max(suggestMutation.data.confidence, 0.95),
         },
       });
@@ -184,8 +214,47 @@ export function AiAssistantWorkspace() {
     });
   }
 
+  function removeSuggestedItem(index: number) {
+    setDraft((current) => {
+      if (!current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        selectedItems: current.selectedItems.filter((_, currentIndex) => currentIndex !== index),
+        suggestedServices: current.suggestedServices.filter((_, currentIndex) => currentIndex !== index),
+      };
+    });
+  }
+
+  function updateWorkItem(index: number, value: string) {
+    setDraft((current) => {
+      if (!current) {
+        return current;
+      }
+
+      const next = [...current.workItems];
+      next[index] = { value };
+      return { ...current, workItems: next };
+    });
+  }
+
+  function removeWorkItem(index: number) {
+    setDraft((current) => {
+      if (!current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        workItems: current.workItems.filter((_, currentIndex) => currentIndex !== index),
+      };
+    });
+  }
+
   const suggestion = suggestMutation.data;
-  const totalEstimated = suggestion?.suggested_items.reduce((sum, item) => sum + item.total, 0) || 0;
+  const totalEstimated = draft?.selectedItems.reduce((sum, item) => sum + item.total, 0) || 0;
 
   return (
     <div className="space-y-6">
@@ -232,7 +301,7 @@ export function AiAssistantWorkspace() {
             </div>
             <Button
               onClick={createDeal}
-              disabled={createDealMutation.isPending || !clientId || !suggestion?.suggested_items.length}
+              disabled={createDealMutation.isPending || !clientId || !draft?.selectedItems.length}
             >
               <BriefcaseBusiness className="h-4 w-4" />
               Crear cotización
@@ -265,6 +334,20 @@ export function AiAssistantWorkspace() {
                   </p>
                 </div>
               </div>
+            </div>
+          ) : null}
+
+          {suggestion.catalog_updates.pending_count ? (
+            <div className="rounded-[28px] border border-[rgba(14,116,144,0.16)] bg-[rgba(236,254,255,0.82)] px-5 py-4">
+              <p className="text-sm font-semibold text-[rgb(21,94,117)]">
+                Se detectaron {suggestion.catalog_updates.pending_count} servicios nuevos para catálogo
+              </p>
+              <p className="mt-1 text-sm text-[rgb(14,116,144)]">
+                Revísalos en Catálogo para validarlos y complementar precio.
+              </p>
+              <p className="mt-2 text-sm text-[rgb(8,47,73)]">
+                {suggestion.catalog_updates.detected_pending.join(' · ')}
+              </p>
             </div>
           ) : null}
 
@@ -431,16 +514,20 @@ export function AiAssistantWorkspace() {
                 </div>
 
                 <div className="space-y-3">
-                  {isEditing ? (
-                    draft.suggestedServices.map((entry, index) => (
-                      <Input
-                        key={`service-${index}`}
-                        value={entry.value}
-                        onChange={(event) => updateSuggestedService(index, event.target.value)}
-                        placeholder="Servicio sugerido"
-                      />
-                    ))
-                  ) : suggestion.suggested_items.length ? (
+                    {isEditing ? (
+                      draft.selectedItems.map((item, index) => (
+                        <div key={`${item.service}-${index}`} className="grid gap-2 md:grid-cols-[1fr_auto]">
+                          <Input
+                            value={draft.suggestedServices[index]?.value || item.service}
+                            onChange={(event) => updateSuggestedService(index, event.target.value)}
+                            placeholder="Servicio sugerido"
+                          />
+                          <Button type="button" variant="ghost" size="icon" onClick={() => removeSuggestedItem(index)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))
+                    ) : suggestion.suggested_items.length ? (
                     suggestion.suggested_items.map((item, index) => (
                       <div key={`${item.service}-${index}`} className="rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel-subtle)] p-4">
                         <div className="flex items-start justify-between gap-4">
@@ -471,6 +558,15 @@ export function AiAssistantWorkspace() {
                             ? {
                                 ...current,
                                 suggestedServices: [...current.suggestedServices, { value: '' }],
+                                selectedItems: [
+                                  ...current.selectedItems,
+                                  {
+                                    service: '',
+                                    quantity: 1,
+                                    unit_price: 0,
+                                    total: 0,
+                                  },
+                                ],
                               }
                             : current,
                         )
@@ -480,6 +576,75 @@ export function AiAssistantWorkspace() {
                     </Button>
                   ) : null}
                 </div>
+
+                <div className="rounded-[24px] border border-[var(--color-border)] bg-white p-4">
+                  <p className="text-sm font-semibold text-[var(--color-text)]">Trabajos a realizar</p>
+                  <div className="mt-3 space-y-2">
+                    {isEditing ? (
+                      draft.workItems.map((workItem, index) => (
+                        <div key={`work-item-${index}`} className="grid gap-2 md:grid-cols-[1fr_auto]">
+                          <Input
+                            value={workItem.value}
+                            onChange={(event) => updateWorkItem(index, event.target.value)}
+                            placeholder="Trabajo a realizar"
+                          />
+                          <Button type="button" variant="ghost" size="icon" onClick={() => removeWorkItem(index)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))
+                    ) : suggestion.suggested_work_items.length ? (
+                      suggestion.suggested_work_items.map((workItem) => (
+                        <div
+                          key={workItem}
+                          className="rounded-2xl bg-[var(--color-panel-subtle)] px-4 py-3 text-sm text-[var(--color-text)]"
+                        >
+                          {workItem}
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-sm text-[var(--color-text-muted)]">No se detectaron trabajos derivados del suministro sugerido.</p>
+                    )}
+                  </div>
+                  {isEditing ? (
+                    <div className="mt-3">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() =>
+                          setDraft((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  workItems: [...current.workItems, { value: '' }],
+                                }
+                              : current,
+                          )
+                        }
+                      >
+                        Agregar trabajo
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+
+                {isEditing ? (
+                  <div className="rounded-[24px] border border-[var(--color-border)] bg-white p-4">
+                    <p className="text-sm font-semibold text-[var(--color-text)]">Feedback en lenguaje natural</p>
+                    <Textarea
+                      className="mt-3"
+                      rows={4}
+                      value={draft.feedbackNotes}
+                      onChange={(event) =>
+                        setDraft((current) =>
+                          current ? { ...current, feedbackNotes: event.target.value } : current,
+                        )
+                      }
+                      placeholder="Ejemplo: no usamos configuración del relevador porque ya viene ajustado por fábrica, y tampoco aplica prueba con carga en este alcance."
+                    />
+                  </div>
+                ) : null}
 
                 <div className="rounded-[24px] border border-[var(--color-border)] bg-white p-4">
                   <p className="text-sm font-semibold text-[var(--color-text)]">Historial similar</p>

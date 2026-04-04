@@ -47,6 +47,29 @@ class CommercialSectionDto {
   content!: string;
 }
 
+class ServiceCatalogItemDto {
+  @IsUUID()
+  serviceId!: string;
+
+  @IsUUID()
+  pricingProfileId!: string;
+
+  @IsNumber()
+  @Min(1)
+  quantity!: number;
+
+  @IsOptional()
+  isOptional?: boolean;
+
+  @IsOptional()
+  @IsString()
+  optionGroup?: string;
+
+  @IsOptional()
+  @IsString()
+  optionLabel?: string;
+}
+
 class SpecialConsiderationDto {
   @IsEnum(SpecialConsiderationType)
   type!: SpecialConsiderationType;
@@ -248,6 +271,44 @@ export class UpdateQuotationTemplateDto {
   @ValidateNested({ each: true })
   @Type(() => CommercialSectionDto)
   sections!: CommercialSectionDto[];
+}
+
+export class CreateServiceCatalogDto {
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  templateType?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ServiceCatalogItemDto)
+  items!: ServiceCatalogItemDto[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  activityNames?: string[];
+}
+
+export class UpdateServiceCatalogDto {
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  templateType?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ServiceCatalogItemDto)
+  items!: ServiceCatalogItemDto[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  activityNames?: string[];
 }
 
 export class CreateWorkItemCatalogDto {

@@ -17,6 +17,7 @@ import {
   useClearCatalog,
   useCreateCategory,
   useCreateService,
+  useDetectedCatalogServices,
   useCloneService,
   useDeleteCategory,
   useDeleteService,
@@ -24,6 +25,7 @@ import {
   useExportCatalogExcel,
   useRefreshExchangeRate,
   useUpdateExchangeRate,
+  useUpdateDetectedCatalogServiceStatus,
   useUpdatePricingProfiles,
   useUpdateService,
   useWorkItemCatalog,
@@ -125,6 +127,7 @@ export function CatalogExplorer() {
   const catalogQuery = useCatalog();
   const createCategoryMutation = useCreateCategory();
   const createServiceMutation = useCreateService();
+  const detectedCatalogServicesQuery = useDetectedCatalogServices();
   const cloneServiceMutation = useCloneService();
   const updateServiceMutation = useUpdateService();
   const updatePricingProfilesMutation = useUpdatePricingProfiles();
@@ -135,6 +138,7 @@ export function CatalogExplorer() {
   const exportCatalogMutation = useExportCatalogExcel();
   const refreshExchangeRateMutation = useRefreshExchangeRate();
   const updateExchangeRateMutation = useUpdateExchangeRate();
+  const updateDetectedCatalogServiceStatusMutation = useUpdateDetectedCatalogServiceStatus();
   const workItemCatalogQuery = useWorkItemCatalog();
 
   const catalog = useMemo(
@@ -174,6 +178,7 @@ export function CatalogExplorer() {
 
   const [exchangeRateInput, setExchangeRateInput] = useState('');
   const workItemCatalog = workItemCatalogQuery.data || [];
+  const detectedCatalogServices = detectedCatalogServicesQuery.data || [];
   const deferredActiveService = useDeferredValue(activeService);
 
   const resolvedCategory = activeCategory || catalog[0]?.code || '';
@@ -438,7 +443,7 @@ export function CatalogExplorer() {
     });
 
     setServiceEditModalOpen(false);
-    notify('Servicio actualizado', 'Los datos del servicio ya fueron editados.');
+    notify('Suministro actualizado', 'Los datos del suministro ya fueron editados.');
   }
 
   async function createCategory() {
@@ -476,7 +481,7 @@ export function CatalogExplorer() {
     setServiceUnit('');
     setServiceRelatedWork('');
     setSelectedWorkItems([]);
-    notify('Servicio creado', 'Ahora puedes editarlo y capturar sus opciones de precio.');
+    notify('Suministro creado', 'Ahora puedes editarlo y capturar sus opciones de precio.');
   }
 
   async function cloneService() {
@@ -495,7 +500,7 @@ export function CatalogExplorer() {
     });
 
     setServiceCloneModalOpen(false);
-    notify('Servicio duplicado', 'Se creo una copia con todas sus opciones de precio.');
+    notify('Suministro duplicado', 'Se creó una copia con todas sus opciones de precio.');
   }
 
   async function saveExchangeRate() {
@@ -525,7 +530,7 @@ export function CatalogExplorer() {
 
     await deleteServiceMutation.mutateAsync({ serviceId: currentService.id, password });
     setActiveService('');
-    notify('Servicio eliminado', 'El servicio ya no aparece en el catalogo activo.');
+    notify('Suministro eliminado', 'El suministro ya no aparece en el catálogo activo.');
   }
 
   async function removeCategory() {
@@ -626,6 +631,76 @@ export function CatalogExplorer() {
 
   return (
     <div className="space-y-6">
+      {detectedCatalogServices.length ? (
+        <Card>
+          <CardHeader
+            title="Servicios detectados por IA"
+            description="Estos servicios fueron encontrados en consultas reales y todavía no existen en catálogo con precio validado."
+          />
+          <CardContent className="space-y-3">
+            {detectedCatalogServices.map((entry) => (
+              <div
+                key={entry.id}
+                className="flex flex-col gap-3 rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel-subtle)] p-4 xl:flex-row xl:items-center xl:justify-between"
+              >
+                <div>
+                  <p className="font-medium text-[var(--color-text)]">{entry.name}</p>
+                  <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+                    Categoría sugerida: {entry.suggestedCategory || 'Sin categoría'} · Uso detectado {entry.usageCount} veces · Confianza {Math.round(entry.confidence * 100)}%
+                  </p>
+                  {entry.sourceInput ? (
+                    <p className="mt-1 text-xs text-[var(--color-text-faint)]">{entry.sourceInput}</p>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setCategoryCode(entry.suggestedCategory || '');
+                      setServiceCode('');
+                      setServiceName(entry.name);
+                      setServiceDescription('');
+                      setServiceUnit('');
+                      setServiceRelatedWork('');
+                      setSelectedWorkItems([]);
+                      setServiceModalOpen(true);
+                    }}
+                  >
+                    <Plus className="h-4 w-4" />
+                    Crear en catálogo
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() =>
+                      updateDetectedCatalogServiceStatusMutation.mutate({
+                        id: entry.id,
+                        status: 'APPROVED',
+                      })
+                    }
+                  >
+                    Validado
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      updateDetectedCatalogServiceStatusMutation.mutate({
+                        id: entry.id,
+                        status: 'DISMISSED',
+                      })
+                    }
+                  >
+                    Descartar
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
+
       {toastMessage ? (
         <div className="fixed bottom-6 right-6 z-40">
           <Toast title={toastMessage.title} description={toastMessage.description} />
@@ -633,7 +708,7 @@ export function CatalogExplorer() {
       ) : null}
 
       <SectionHeading
-        title="Catálogo"
+        title="Catálogo de suministros"
         action={
           <div className="flex flex-wrap gap-2">
             {canManageCatalog ? (
@@ -645,7 +720,7 @@ export function CatalogExplorer() {
             {canManageCatalog ? (
               <Button variant="secondary" onClick={() => setServiceModalOpen(true)} disabled={!currentCategory}>
                 <Plus className="h-4 w-4" />
-                Nuevo servicio
+                Nuevo suministro
               </Button>
             ) : null}
             {canManageCatalog ? (
@@ -708,7 +783,7 @@ export function CatalogExplorer() {
                 Crea la estructura manualmente
               </h3>
               <p className="mt-3 text-sm text-[var(--color-text-muted)]">
-                Empieza creando categorias y luego servicios. Cada servicio puede tener las opciones de precio que tu definas.
+                Empieza creando categorías y luego suministros. Cada suministro puede tener las opciones de precio que tú definas.
               </p>
             </div>
           </CardContent>
@@ -748,7 +823,7 @@ export function CatalogExplorer() {
                       value={serviceQuery}
                       onChange={(event) => setServiceQuery(event.target.value)}
                       className="pl-10"
-                      placeholder="Buscar servicio por nombre o codigo"
+                      placeholder="Buscar suministro por nombre o codigo"
                     />
                   </div>
                   <Select value={serviceSort} onChange={(event) => setServiceSort(event.target.value as 'name' | 'code')}>
@@ -757,7 +832,7 @@ export function CatalogExplorer() {
                   </Select>
                 </div>
                 {currentCategory?.services.length ? (
-                  <DataTable columns={['Servicio', 'Codigo', 'Opciones', 'Estado']}>
+                  <DataTable columns={['Suministro', 'Codigo', 'Opciones', 'Estado']}>
                     {filteredServices.map((service) => (
                       <DataRow
                         key={service.id}
@@ -785,7 +860,7 @@ export function CatalogExplorer() {
                   </DataTable>
                 ) : (
                   <div className="rounded-[24px] border border-dashed border-[var(--color-border)] px-5 py-10 text-center">
-                    <p className="text-sm text-[var(--color-text-muted)]">Esta categoria aun no tiene servicios.</p>
+                    <p className="text-sm text-[var(--color-text-muted)]">Esta categoría aún no tiene suministros.</p>
                   </div>
                 )}
               </CardContent>

@@ -697,14 +697,14 @@ export function QuotationBuilder() {
     setValidityDays('30');
     setCurrency((editingQuotation.currency || 'MXN') as 'MXN' | 'USD');
     const hydratedItems = editingQuotation.items
-      .filter((item) => item.serviceId && item.pricingProfileId)
+      .filter((item) => item.supplyId && item.pricingProfileId)
       .map((item) => ({
-        serviceId: item.serviceId as string,
+        serviceId: item.supplyId as string,
         pricingProfileId: item.pricingProfileId as string,
-        code: item.serviceCode,
-        name: item.serviceName,
+        code: item.supplyCode,
+        name: item.supplyName,
         relatedWork:
-          allServices.find((service) => service.id === item.serviceId)?.relatedWork || '',
+          allServices.find((service) => service.id === item.supplyId)?.relatedWork || '',
         quantity: Number(item.quantity),
         price: Number(item.unitPrice),
         category: item.categoryName,
@@ -1549,7 +1549,7 @@ export function QuotationBuilder() {
     { id: 'client', label: 'Configuración inicial' },
     { id: 'services', label: 'Conceptos' },
     { id: 'considerations', label: 'Consideraciones' },
-    { id: 'work', label: 'Trabajos' },
+    { id: 'work', label: 'Actividades' },
     { id: 'conditions', label: 'Condiciones' },
     { id: 'preview', label: 'Preview' },
   ] as const;
@@ -1810,12 +1810,12 @@ export function QuotationBuilder() {
                   if (matched) {
                     preloadFromQuotationTemplate(matched.id);
                   } else {
-                    showTimedToast('Sin coincidencias', 'No existe una cotización previa con ese servicio para precargar conceptos.');
+                    showTimedToast('Sin coincidencias', 'No existe un servicio catalogado con ese nombre para precargar suministros.');
                   }
                 }}
                 disabled={!title.trim()}
               >
-                Precargar conceptos
+                Precargar suministros
               </Button>
             </div>
 
@@ -1839,7 +1839,7 @@ export function QuotationBuilder() {
 
             <div className="flex justify-end">
               <Button onClick={() => setStep('services')} disabled={!canAdvanceFromClient}>
-                Continuar a conceptos
+                Continuar a suministros
               </Button>
             </div>
           </CardContent>
@@ -1849,7 +1849,7 @@ export function QuotationBuilder() {
       {step === 'services' ? (
         <div className="grid gap-6 xl:grid-cols-[240px_1fr_0.85fr]">
           <Card>
-            <CardHeader title="Categorías" description="Filtra por familia de servicios." />
+            <CardHeader title="Categorías" description="Filtra por familia de suministros." />
             <CardContent className="space-y-3">
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Buscar por clave</p>
@@ -1880,7 +1880,7 @@ export function QuotationBuilder() {
                 >
                   <p className="font-medium">{category.name}</p>
                   <p className={`mt-1 text-xs ${resolvedActiveCategory === category.code ? 'text-white/60' : 'text-[var(--color-text-muted)]'}`}>
-                    {category.services.length} servicios
+                    {category.services.length} suministros
                   </p>
                 </button>
               ))}
@@ -1888,16 +1888,16 @@ export function QuotationBuilder() {
           </Card>
 
           <Card>
-            <CardHeader title="Paso 2. Conceptos" description="Agrega todos los conceptos necesarios antes de pasar a condiciones." action={<Badge variant="info">Ordenados por clave</Badge>} />
+            <CardHeader title="Paso 2. Suministros" description="Agrega todos los suministros necesarios antes de pasar a condiciones." action={<Badge variant="info">Ordenados por clave</Badge>} />
             <CardContent className="space-y-4">
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel-subtle)] px-4 py-3 text-sm text-[var(--color-text-muted)]">
                   {serviceQuery.trim()
                     ? `${filteredServices.length} resultados por clave`
-                    : `${filteredServices.length} conceptos visibles`}
+                    : `${filteredServices.length} suministros visibles`}
                 </div>
                 <Select value={selectedService?.id || ''} onChange={(event) => chooseService(event.target.value)}>
-                  {filteredServices.length ? null : <option value="">Sin conceptos</option>}
+                  {filteredServices.length ? null : <option value="">Sin suministros</option>}
                   {filteredServices.map((service) => (
                     <option key={service.id} value={service.id}>
                       {service.name} · {service.code}
@@ -1918,10 +1918,10 @@ export function QuotationBuilder() {
               <div className="rounded-[24px] border border-[var(--color-border)] bg-white p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <p className="font-semibold">{selectedService?.name || 'Selecciona un concepto'}</p>
+                    <p className="font-semibold">{selectedService?.name || 'Selecciona un suministro'}</p>
                     <p className="mt-1 text-sm font-medium text-[var(--color-text)]">{selectedService?.code || 'SIN CLAVE'}</p>
                     <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-                      {selectedService?.description || 'Elige concepto y opción de precio configurable.'}
+                      {selectedService?.description || 'Elige suministro y opción de precio configurable.'}
                     </p>
                     <p className="mt-3 text-xs uppercase tracking-[0.16em] text-[var(--color-text-faint)]">
                       {(selectedService?.categoryName || currentCategory?.name || 'SIN CATEGORIA') + (selectedProfile ? ` · ${selectedProfile.name}` : '')}
@@ -1996,7 +1996,7 @@ export function QuotationBuilder() {
           </Card>
 
           <Card>
-            <CardHeader title="Resumen de conceptos" description="Siempre puedes regresar y ajustar antes de continuar." />
+            <CardHeader title="Resumen de suministros" description="Siempre puedes regresar y ajustar antes de continuar." />
             <CardContent className="space-y-4">
               {items.map((item) => {
                 const key = `${item.code}-${item.pricingProfileId}-${item.currency}`;
@@ -2204,7 +2204,7 @@ export function QuotationBuilder() {
             <div className="rounded-[24px] border border-[var(--color-border)] bg-white p-5">
               <div className="grid gap-3 md:grid-cols-4">
                 <div>
-                  <p className="text-sm text-[var(--color-text-muted)]">Subtotal conceptos</p>
+                  <p className="text-sm text-[var(--color-text-muted)]">Subtotal suministros</p>
                   <p className="mt-1 font-semibold text-[var(--color-text)]">{formatCurrency(serviceSubtotal, currency)}</p>
                 </div>
                 <div>
@@ -2224,10 +2224,10 @@ export function QuotationBuilder() {
 
             <div className="flex justify-between">
               <Button variant="secondary" onClick={() => setStep('services')}>
-                Regresar a servicios
+                Regresar a suministros
               </Button>
               <Button onClick={() => setStep('work')} disabled={!canAdvanceFromConsiderations}>
-                Continuar a trabajos
+                Continuar a actividades
               </Button>
             </div>
           </CardContent>
@@ -2236,7 +2236,7 @@ export function QuotationBuilder() {
 
       {step === 'work' ? (
         <Card>
-          <CardHeader title="Paso 4. Trabajos a realizar" description="Los trabajos automáticos se ordenan por clave de concepto y se muestran como un solo bloque de prosa." />
+          <CardHeader title="Paso 4. Actividades" description="Las actividades automáticas se ordenan por clave del suministro y se muestran como un solo bloque de prosa." />
           <CardContent className="space-y-4">
             {commercialSections
               .filter((section) => normalizeSectionTitle(section.title) === 'trabajos a realizar:')
@@ -2256,7 +2256,7 @@ export function QuotationBuilder() {
                     <div className="mt-3 space-y-3">
                       <div className="grid gap-3 md:grid-cols-[1fr_auto]">
                         <Select value={selectedWorkItem} onChange={(event) => setSelectedWorkItem(event.target.value)}>
-                          <option value="">Selecciona trabajo guardado</option>
+                          <option value="">Selecciona actividad guardada</option>
                           {workItemCatalog.map((item) => (
                             <option key={item.id} value={item.name}>
                               {item.name}
@@ -2275,19 +2275,19 @@ export function QuotationBuilder() {
                             {workItems.join('\n')}
                           </p>
                           <p className="mt-3 text-xs text-[var(--color-text-muted)]">
-                            Los trabajos se ordenan por clave del concepto. “Entrega de reporte” siempre se envía al final.
+                            Las actividades se ordenan por clave del suministro. “Entrega de reporte” siempre se envía al final.
                           </p>
                         </div>
                       ) : (
                         <div className="rounded-2xl bg-white px-4 py-4 text-sm text-[var(--color-text-muted)]">
-                          Agrega trabajos desde el catálogo o escríbelos manualmente abajo.
+                          Agrega actividades desde el catálogo o escríbelas manualmente abajo.
                         </div>
                       )}
 
                       <Textarea
                         value={manualWorkItems.join('\n')}
                         onChange={(event) => updateWorkItemsContent(splitWorkItems(event.target.value))}
-                        placeholder="Trabajos adicionales. Cada renglón será un trabajo independiente"
+                        placeholder="Actividades adicionales. Cada renglón será una actividad independiente"
                         className="min-h-[180px]"
                       />
                     </div>
@@ -2347,7 +2347,7 @@ export function QuotationBuilder() {
 
             <div className="flex justify-between">
               <Button variant="secondary" onClick={() => setStep('work')}>
-                Regresar a trabajos
+                Regresar a actividades
               </Button>
               <Button onClick={() => setStep('preview')}>
                 Ir al preview
@@ -2360,7 +2360,7 @@ export function QuotationBuilder() {
       {step === 'preview' ? (
         <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
           <Card>
-          <CardHeader title="Paso 6. Preview de la cotización" description="Revisa cliente, conceptos, trabajos, consideraciones y condiciones antes de generar la cotización." />
+          <CardHeader title="Paso 6. Preview de la cotización" description="Revisa cliente, suministros, actividades, consideraciones y condiciones antes de generar la cotización." />
             <CardContent className="space-y-4">
               <div className="rounded-[24px] border border-[var(--color-border)] bg-[var(--color-panel-subtle)] p-4">
                 <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Portada comercial</p>
@@ -2411,7 +2411,7 @@ export function QuotationBuilder() {
               </div>
 
               <div className="rounded-[24px] border border-[var(--color-border)] bg-white p-5">
-                <p className="text-sm font-semibold text-[var(--color-text)]">Trabajos a realizar</p>
+                <p className="text-sm font-semibold text-[var(--color-text)]">Actividades</p>
                 <div className="mt-4 space-y-3">
                   {combinedWorkItems.length ? (
                     <div className="rounded-2xl bg-[var(--color-panel-subtle)] px-4 py-4">
@@ -2421,7 +2421,7 @@ export function QuotationBuilder() {
                     </div>
                   ) : (
                     <div className="rounded-2xl bg-[var(--color-panel-subtle)] px-4 py-4 text-sm text-[var(--color-text-muted)]">
-                      No agregaste trabajos a realizar.
+                      No agregaste actividades.
                     </div>
                   )}
                 </div>

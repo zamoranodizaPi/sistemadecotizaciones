@@ -12,6 +12,7 @@ import type {
   CatalogResponse,
   ClientResponse,
   DashboardMetricsResponse,
+  DetectedCatalogServiceResponse,
   ExchangeRateResponse,
   ExportCatalogResponse,
   ImportConfirmResponse,
@@ -97,7 +98,13 @@ export function useAiCreateDeal() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (payload: { text: string; clientId: string; title?: string }) =>
+    mutationFn: (payload: {
+      text: string;
+      clientId: string;
+      title?: string;
+      items?: Array<{ serviceId: string; pricingProfileId: string; quantity: number }>;
+      workItems?: string[];
+    }) =>
       apiPost<AiCreateDealResponse>('/ai/create-deal', payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['quotations'] });
@@ -125,6 +132,13 @@ export function useCatalog() {
   });
 }
 
+export function useDetectedCatalogServices() {
+  return useQuery({
+    queryKey: ['catalog-detected-services'],
+    queryFn: () => apiGet<DetectedCatalogServiceResponse>('/catalog/detected-services'),
+  });
+}
+
 function invalidateCatalog(queryClient: ReturnType<typeof useQueryClient>) {
   queryClient.invalidateQueries({ queryKey: ['catalog'] });
 }
@@ -148,6 +162,18 @@ export function useCreateCategory() {
       apiPost('/catalog/categories', payload),
     onSuccess: () => {
       invalidateCatalog(queryClient);
+    },
+  });
+}
+
+export function useUpdateDetectedCatalogServiceStatus() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: { id: string; status: 'PENDING' | 'APPROVED' | 'DISMISSED' }) =>
+      apiPatch(`/catalog/detected-services/${payload.id}/status`, { status: payload.status }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['catalog-detected-services'] });
     },
   });
 }
@@ -545,6 +571,67 @@ export function useServiceTemplates() {
   return useQuery({
     queryKey: ['service-templates'],
     queryFn: () => apiGet<ServiceTemplateResponse>('/quotations/service-templates'),
+  });
+}
+
+export function useCreateServiceTemplate() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: {
+      name: string;
+      templateType?: string;
+      items: Array<{
+        serviceId: string;
+        pricingProfileId: string;
+        quantity: number;
+        isOptional?: boolean;
+        optionGroup?: string;
+        optionLabel?: string;
+      }>;
+      activityNames?: string[];
+    }) => apiPost('/quotations/service-templates', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['service-templates'] });
+    },
+  });
+}
+
+export function useUpdateServiceTemplate() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...payload
+    }: {
+      id: string;
+      name: string;
+      templateType?: string;
+      items: Array<{
+        serviceId: string;
+        pricingProfileId: string;
+        quantity: number;
+        isOptional?: boolean;
+        optionGroup?: string;
+        optionLabel?: string;
+      }>;
+      activityNames?: string[];
+    }) => apiPatch(`/quotations/service-templates/${id}`, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['service-templates'] });
+    },
+  });
+}
+
+export function useDeleteServiceTemplate() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/quotations/service-templates/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['service-templates'] });
+    },
   });
 }
 

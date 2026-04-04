@@ -51,7 +51,7 @@ export class MetricsService {
       );
 
       for (const item of quotation.items) {
-        services.set(item.serviceName, (services.get(item.serviceName) || 0) + Number(item.quantity));
+        services.set(item.supplyName, (services.get(item.supplyName) || 0) + Number(item.quantity));
       }
     }
 

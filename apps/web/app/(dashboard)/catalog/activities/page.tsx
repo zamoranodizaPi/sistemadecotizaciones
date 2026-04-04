@@ -1,5 +1,5 @@
 import { CatalogWorkspace } from '@/components/catalog/catalog-workspace';
 
-export default function WorkItemsCatalogPage() {
+export default function ActivitiesCatalogPage() {
   return <CatalogWorkspace section="actividades" />;
 }

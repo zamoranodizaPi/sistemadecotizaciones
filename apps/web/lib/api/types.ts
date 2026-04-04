@@ -56,7 +56,7 @@ export type CatalogResponse = Array<{
   name: string;
   code: string;
   description?: string | null;
-  services: Array<{
+  supplies: Array<{
     id: string;
     code: string;
     name: string;
@@ -79,6 +79,18 @@ export type CatalogResponse = Array<{
       usdPrice: string | number | null;
     }>;
   }>;
+}>;
+
+export type DetectedCatalogServiceResponse = Array<{
+  id: string;
+  name: string;
+  suggestedCategory: string | null;
+  sourceInput: string | null;
+  confidence: number;
+  usageCount: number;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
 }>;
 
 export type ExchangeRateResponse = {
@@ -193,10 +205,10 @@ export type QuotationListResponse = Array<{
   }>;
   items: Array<{
     id: string;
-    serviceId: string | null;
+    supplyId: string | null;
     pricingProfileId?: string | null;
-    serviceCode: string;
-    serviceName: string;
+    supplyCode: string;
+    supplyName: string;
     categoryName: string;
     pricingProfileName?: string | null;
     isOptional?: boolean;
@@ -382,6 +394,7 @@ export type AiSuggestedQuoteResponse = {
     unit_price: number;
     total: number;
   }>;
+  suggested_work_items: string[];
   historical_references: Array<{
     id: string;
     folio: string;
@@ -390,6 +403,10 @@ export type AiSuggestedQuoteResponse = {
     similarity: number;
   }>;
   confidence: number;
+  catalog_updates: {
+    pending_count: number;
+    detected_pending: string[];
+  };
   missing_fields: string[];
   needs_review: boolean;
   rules_applied: string[];

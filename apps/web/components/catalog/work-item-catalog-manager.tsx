@@ -131,34 +131,34 @@ export function WorkItemCatalogManager() {
       ) : null}
 
       <SectionHeading
-        title="Trabajos a realizar"
+        title="Actividades"
       />
 
       <Card>
         <CardHeader
-          title="Catálogo de trabajos"
-          description="Administra el listado reutilizable que después podrás asociar a cada concepto."
+          title="Catálogo de actividades"
+          description="Administra el listado reutilizable que después podrás asociar a cada servicio."
         />
         <CardContent className="space-y-5">
           <div className="space-y-3">
             <Textarea
               value={newItemName}
               onChange={(event) => setNewItemName(event.target.value)}
-              placeholder="Escribe uno o varios trabajos, un renglón por cada trabajo"
+              placeholder="Escribe una o varias actividades, un renglón por cada actividad"
               rows={10}
               className="w-full"
             />
             <div className="flex justify-end">
               <Button onClick={createWorkItem} disabled={createWorkItemMutation.isPending || !newItemName.trim()}>
                 <Plus className="h-4 w-4" />
-                Agregar trabajos
+                Agregar actividades
               </Button>
             </div>
           </div>
 
           {!workItems.length ? (
             <div className="rounded-[24px] border border-dashed border-[var(--color-border)] px-5 py-12 text-center">
-              <p className="text-sm text-[var(--color-text-muted)]">Aún no hay trabajos guardados.</p>
+              <p className="text-sm text-[var(--color-text-muted)]">Aún no hay actividades guardadas.</p>
             </div>
           ) : (
             workItems.map((item) => {

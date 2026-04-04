@@ -67,10 +67,10 @@ export function mapQuotationsForUi(quotations: QuotationListResponse) {
     items: quotation.items.length,
     lines: quotation.items.map((item) => ({
       id: item.id,
-      serviceId: item.serviceId,
+      serviceId: item.supplyId,
       pricingProfileId: item.pricingProfileId,
-      serviceCode: item.serviceCode,
-      serviceName: item.serviceName,
+      serviceCode: item.supplyCode,
+      serviceName: item.supplyName,
       categoryName: item.categoryName,
       pricingProfileName: item.pricingProfileName,
       isOptional: Boolean(item.isOptional),

@@ -24,6 +24,8 @@ export class AiAssistantController {
       body.clientId,
       user.userId,
       body.title,
+      body.items,
+      body.workItems,
     );
   }
 

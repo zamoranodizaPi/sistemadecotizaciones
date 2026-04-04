@@ -7,11 +7,13 @@ import { Roles } from '../../../auth/presentation/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../auth/presentation/guards/roles.guard';
 import {
+  CreateServiceCatalogDto,
   CreateReusableTextBlockDto,
   CreateWorkItemCatalogDto,
   CreateQuotationActivityDto,
   CreateQuotationDto,
   UpdateQuotationDto,
+  UpdateServiceCatalogDto,
   UpdateReusableTextBlockDto,
   UpdateWorkItemCatalogDto,
   UpdateQuotationTemplateDto,
@@ -45,6 +47,24 @@ export class QuotationsController {
   @Get('service-templates')
   serviceTemplates() {
     return this.quotationsService.listServiceTemplates();
+  }
+
+  @Post('service-templates')
+  @Roles('ADMIN', 'SALES')
+  createServiceTemplate(@Body() body: CreateServiceCatalogDto) {
+    return this.quotationsService.createServiceTemplate(body);
+  }
+
+  @Patch('service-templates/:id')
+  @Roles('ADMIN', 'SALES')
+  updateServiceTemplate(@Param('id') id: string, @Body() body: UpdateServiceCatalogDto) {
+    return this.quotationsService.updateServiceTemplate(id, body);
+  }
+
+  @Delete('service-templates/:id')
+  @Roles('ADMIN', 'SALES')
+  deleteServiceTemplate(@Param('id') id: string) {
+    return this.quotationsService.deleteServiceTemplate(id);
   }
 
   @Get('work-items/catalog')

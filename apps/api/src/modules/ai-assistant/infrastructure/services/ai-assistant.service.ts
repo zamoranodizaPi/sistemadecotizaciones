@@ -19,7 +19,7 @@ export class AiAssistantService {
       throw new BadRequestException('El texto es obligatorio.');
     }
 
-    const services = await this.prisma.service.findMany({
+    const services = await this.prisma.supply.findMany({
       where: { deletedAt: null },
       include: {
         category: true,
@@ -32,6 +32,7 @@ export class AiAssistantService {
 
     const historySnapshot = await this.loadRecentHistorySnapshot();
     const localMatch = await this.aiLearningService.findBestRule(input);
+    const detectedServiceHints = this.extractServiceHintsFromText(input);
     const parsed = localMatch
       ? {
           category: localMatch.category,
@@ -53,14 +54,26 @@ export class AiAssistantService {
       services,
       parsed,
       input,
-      localMatch?.suggestedServices || [],
+      localMatch?.suggestedServices || detectedServiceHints,
     );
     const suggestedItems = this.buildSuggestedItems(
       candidateServices,
       similarQuotations,
       parsed,
       input,
-      localMatch?.suggestedServices || [],
+      localMatch?.suggestedServices || detectedServiceHints,
+    );
+    const suggestedWorkItems = this.buildSuggestedWorkItems(
+      candidateServices,
+      detectedServiceHints,
+      suggestedItems.map((item) => item.service),
+    );
+    const catalogUpdates = await this.syncDetectedCatalogServices(
+      services.map((service: { name: string }) => service.name),
+      detectedServiceHints.length ? detectedServiceHints : suggestedItems.map((item) => item.service),
+      parsed.category,
+      input,
+      parsed.confidence,
     );
     const confidence =
       parsed.engine === 'local_learning'
@@ -88,6 +101,7 @@ export class AiAssistantService {
         variables: parsed.variables,
       },
       suggested_items: suggestedItems,
+      suggested_work_items: suggestedWorkItems,
       historical_references: similarQuotations.slice(0, 3).map((quotation) => ({
         id: quotation.id,
         folio: quotation.folio,
@@ -96,6 +110,7 @@ export class AiAssistantService {
         similarity: quotation.similarity,
       })),
       confidence,
+      catalog_updates: catalogUpdates,
       missing_fields: missingFields,
       needs_review: confidence < 0.8 || missingFields.length > 0,
       rules_applied: this.resolveAppliedRules(input),
@@ -128,16 +143,33 @@ export class AiAssistantService {
     };
   }
 
-  async createDealFromSuggestion(text: string, clientId: string, actorUserId?: string, customTitle?: string) {
+  async createDealFromSuggestion(
+    text: string,
+    clientId: string,
+    actorUserId?: string,
+    customTitle?: string,
+    overrideItems?: Array<{
+      serviceId: string;
+      pricingProfileId: string;
+      quantity: number;
+    }>,
+    overrideWorkItems?: string[],
+  ) {
     const suggestion = await this.suggestQuote(text);
 
     if (!suggestion.suggested_items.length) {
       throw new BadRequestException('No fue posible generar una propuesta útil con ese texto.');
     }
 
-    const validItems = suggestion.suggested_items.filter(
-      (item) => item.serviceId && item.pricingProfileId,
-    );
+    const validItems = overrideItems?.length
+      ? overrideItems
+      : suggestion.suggested_items.filter(
+          (item) => item.serviceId && item.pricingProfileId,
+        ).map((item) => ({
+          serviceId: item.serviceId as string,
+          pricingProfileId: item.pricingProfileId as string,
+          quantity: item.quantity,
+        }));
 
     if (!validItems.length) {
       throw new BadRequestException('La IA no encontró conceptos configurados para generar el deal.');
@@ -159,9 +191,17 @@ export class AiAssistantService {
         validityDays: 30,
         currency: 'MXN',
         exchangeRate: undefined,
+        commercialSections: (overrideWorkItems?.length || suggestion.suggested_work_items.length)
+          ? [
+              {
+                title: 'Trabajos a realizar:',
+                content: (overrideWorkItems?.length ? overrideWorkItems : suggestion.suggested_work_items).join('\n'),
+              },
+            ]
+          : undefined,
         items: validItems.map((item) => ({
-          serviceId: item.serviceId as string,
-          pricingProfileId: item.pricingProfileId as string,
+          serviceId: item.serviceId,
+          pricingProfileId: item.pricingProfileId,
           quantity: item.quantity,
         })),
       },
@@ -197,6 +237,7 @@ export class AiAssistantService {
     suggestedServiceHints: string[],
   ) {
     const normalizedInput = this.normalize(input);
+    const searchTerms = this.expandSearchTerms(parsed, input, suggestedServiceHints);
 
     return services
       .map((service) => {
@@ -220,6 +261,9 @@ export class AiAssistantService {
           score += 4.5;
         }
 
+        const tokenMatches = searchTerms.filter((term) => haystack.includes(term)).length;
+        score += tokenMatches * 0.9;
+
         for (const keyword of parsed.keywords) {
           if (haystack.includes(this.normalize(keyword))) {
             score += 1.2;
@@ -232,7 +276,7 @@ export class AiAssistantService {
 
         return { service, score };
       })
-      .filter((entry) => entry.score > 0)
+      .filter((entry) => entry.score > 1.4)
       .sort((left, right) => right.score - left.score)
       .slice(0, 8);
   }
@@ -260,8 +304,8 @@ export class AiAssistantService {
       similarity: number;
       client: { legalName: string };
       items: Array<{
-        serviceCode: string;
-        serviceName: string;
+        supplyCode: string;
+        supplyName: string;
         categoryName: string;
         quantity: unknown;
         unitPrice: unknown;
@@ -278,7 +322,7 @@ export class AiAssistantService {
       const pricingProfile = service.pricingProfiles[0];
       const historicalPrices = similarQuotations
         .flatMap((quotation) => quotation.items)
-        .filter((item) => this.normalize(item.serviceName) === this.normalize(service.name))
+        .filter((item) => this.normalize(item.supplyName) === this.normalize(service.name))
         .map((item) => Number(item.unitPrice));
       const profilePrice = pricingProfile?.mxnPrice ? Number(pricingProfile.mxnPrice) : pricingProfile?.usdPrice ? Number(pricingProfile.usdPrice) : 0;
       const unitPrice = historicalPrices.length
@@ -301,6 +345,29 @@ export class AiAssistantService {
       .filter((item, index, current) => current.findIndex((entry) => entry.serviceId === item.serviceId) === index);
 
     return [...baseItems, ...ruleExtras].slice(0, 6);
+  }
+
+  private buildSuggestedWorkItems(
+    rankedServices: Array<{
+      service: {
+        relatedWork: string | null;
+      };
+    }>,
+    detectedServiceHints: string[],
+    suggestedServiceNames: string[],
+  ) {
+    const fromRelatedWork = rankedServices
+      .slice(0, 6)
+      .flatMap(({ service }) => this.splitWorkItems(service.relatedWork || ''));
+
+    const fallbackHints = detectedServiceHints.filter(
+      (hint) =>
+        !suggestedServiceNames.some((serviceName) => this.normalize(serviceName) === this.normalize(hint)),
+    );
+
+    return this.orderWorkItemsWithReportLast(
+      Array.from(new Set([...fromRelatedWork, ...fallbackHints].map((item) => item.trim()).filter(Boolean))),
+    ).slice(0, 20);
   }
 
   private resolveRuleBasedServices(
@@ -368,7 +435,7 @@ export class AiAssistantService {
             quotation.title,
             quotation.notes || '',
             quotation.serviceType || '',
-            ...quotation.items.flatMap((item) => [item.serviceCode, item.serviceName, item.categoryName]),
+            ...quotation.items.flatMap((item) => [item.supplyCode, item.supplyName, item.categoryName]),
           ].join(' '),
         );
 
@@ -450,6 +517,154 @@ export class AiAssistantService {
     return Array.from(new Set(this.normalize(value).split(/[^a-z0-9]+/).filter((token) => token.length > 2)));
   }
 
+  private splitWorkItems(content: string) {
+    return content
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
+  private orderWorkItemsWithReportLast(values: string[]) {
+    const reportItems = values.filter((value) => this.normalize(value).includes('entrega de reporte'));
+    const regularItems = values.filter((value) => !this.normalize(value).includes('entrega de reporte'));
+    return [...regularItems, ...reportItems];
+  }
+
+  private extractServiceHintsFromText(value: string) {
+    const lines = value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const pivotIndex = lines.findIndex((line) =>
+      /se realizo lo siguiente|se realiz[oó] lo siguiente|alcance|incluye|trabajos/i.test(line),
+    );
+
+    const sourceLines = pivotIndex >= 0 ? lines.slice(pivotIndex + 1) : lines.filter((line) => line.length > 18);
+    const expanded = sourceLines.flatMap((line) =>
+      line
+        .split(/(?<=\w)\s{2,}|(?<=\w)\s+(?=[A-ZÁÉÍÓÚÑ][a-záéíóúñ])/)
+        .map((chunk) => chunk.trim())
+        .filter((chunk) => chunk.length > 8),
+    );
+
+    return Array.from(
+      new Set(
+        expanded.filter((entry) => !/servicio a |se realizo|se realiz[oó]|tablero|minigear|secciones/i.test(entry)),
+      ),
+    ).slice(0, 20);
+  }
+
+  private expandSearchTerms(
+    parsed: Awaited<ReturnType<AiService['parseQuoteIntent']>>,
+    input: string,
+    suggestedServiceHints: string[],
+  ) {
+    const normalizedInput = this.normalize(input);
+    const terms = new Set<string>([
+      ...this.extractKeywords(input),
+      ...parsed.keywords.map((keyword) => this.normalize(keyword)),
+      ...suggestedServiceHints.flatMap((hint) => this.extractKeywords(hint)),
+    ]);
+
+    if (parsed.category) {
+      terms.add(this.normalize(parsed.category));
+    }
+
+    if (parsed.service) {
+      this.extractKeywords(parsed.service).forEach((term) => terms.add(term));
+    }
+
+    if (normalizedInput.includes('pruebas completas')) {
+      ['prueba', 'pruebas', 'configuracion', 'reporte', 'reportes'].forEach((term) => terms.add(term));
+    }
+
+    if (normalizedInput.includes('tablero')) {
+      ['tablero', 'tableros', 'seccion', 'secciones'].forEach((term) => terms.add(term));
+    }
+
+    if (normalizedInput.includes('ccm')) {
+      ['ccm', 'motor', 'motores'].forEach((term) => terms.add(term));
+    }
+
+    return [...terms].filter((term) => term.length > 2);
+  }
+
+  private async syncDetectedCatalogServices(
+    existingServices: string[],
+    detectedServices: string[],
+    category: string | null,
+    input: string,
+    confidence: number,
+  ) {
+    const existingNormalized = new Set(existingServices.map((service) => this.normalize(service)));
+    const missing = Array.from(
+      new Set(
+        detectedServices
+          .map((service) => service.trim())
+          .filter((service) => service.length > 4)
+          .filter((service) => !existingNormalized.has(this.normalize(service))),
+      ),
+    );
+
+    if (!missing.length) {
+      return {
+        pending_count: 0,
+        detected_pending: [],
+      };
+    }
+
+    const upserted: string[] = [];
+
+    for (const serviceName of missing) {
+      const normalizedName = this.normalize(serviceName);
+
+      try {
+        const record = await this.prisma.detectedCatalogService.upsert({
+          where: { normalizedName },
+          update: {
+            name: serviceName,
+            suggestedCategory: category,
+            sourceInput: input,
+            confidence,
+            usageCount: { increment: 1 },
+            status: 'PENDING',
+          },
+          create: {
+            name: serviceName,
+            normalizedName,
+            suggestedCategory: category,
+            sourceInput: input,
+            confidence,
+            usageCount: 1,
+            status: 'PENDING',
+          },
+        });
+
+        upserted.push(record.name);
+      } catch (error) {
+        if (!this.isMissingDetectedCatalogServiceTable(error)) {
+          throw error;
+        }
+      }
+    }
+
+    return {
+      pending_count: upserted.length,
+      detected_pending: upserted,
+    };
+  }
+
+  private isMissingDetectedCatalogServiceTable(error: unknown) {
+    return (
+      error instanceof Error &&
+      'code' in error &&
+      (error as { code?: string }).code === 'P2021' &&
+      typeof error.message === 'string' &&
+      error.message.includes('DetectedCatalogService')
+    );
+  }
+
   private buildCatalogSnapshot(
     services: Array<{
       code: string;
@@ -479,7 +694,7 @@ export class AiAssistantService {
 
     return quotations
       .map((quotation) => {
-        const services = quotation.items.map((item) => item.serviceName).filter(Boolean).join(', ');
+        const services = quotation.items.map((item) => item.supplyName).filter(Boolean).join(', ');
         return `${quotation.folio} | ${quotation.client.legalName} | ${quotation.serviceType || 'General'} | ${services}`;
       })
       .join('\n');

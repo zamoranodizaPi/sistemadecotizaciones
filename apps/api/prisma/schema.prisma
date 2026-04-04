@@ -1,0 +1,359 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  SALES
+  OPERATIONS
+  FINANCE
+  VIEWER
+}
+
+enum QuotationStatus {
+  NUEVA
+  EN_PROCESO
+  ENVIADA
+  ACEPTADA
+  EJECUTADA
+  CUENTAS_POR_COBRAR
+  PAGADA
+}
+
+enum ActivityType {
+  NOTE
+  EMAIL
+  CALL
+  STAGE_CHANGE
+  PDF_SENT
+  DEAL_CREATED
+  EDIT
+}
+
+enum SpecialConsiderationType {
+  PERCENTAGE
+  TRAVEL
+}
+
+model User {
+  id           String            @id @default(uuid())
+  name         String
+  email        String            @unique
+  passwordHash String
+  role         UserRole
+  isActive     Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  quotations   Quotation[]       @relation("QuotationOwner")
+  history      QuotationHistory[]
+  activities   Activity[]
+}
+
+model Pipeline {
+  id          String      @id @default(uuid())
+  name        String
+  objectType  String      @default("deals")
+  isDefault   Boolean     @default(false)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  stages      DealStage[]
+  quotations  Quotation[]
+
+  @@unique([objectType, isDefault])
+}
+
+model DealStage {
+  id           String      @id @default(uuid())
+  pipelineId   String
+  name         String
+  code         String
+  order        Int
+  probability  Decimal     @db.Decimal(4, 2)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  pipeline     Pipeline    @relation(fields: [pipelineId], references: [id])
+  quotations   Quotation[]
+
+  @@unique([pipelineId, code])
+  @@unique([pipelineId, order])
+}
+
+model Category {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  code        String    @unique
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  services    Service[]
+
+  @@index([deletedAt])
+}
+
+model Service {
+  id          String         @id @default(uuid())
+  categoryId  String
+  code        String         @unique
+  name        String
+  description String?
+  unit        String?
+  relatedWork String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  deletedAt   DateTime?
+  category    Category       @relation(fields: [categoryId], references: [id])
+  prices      ServicePrice[]
+  pricingProfiles ServicePricingProfile[]
+  items       QuotationItem[]
+
+  @@index([categoryId, deletedAt])
+}
+
+model ServicePrice {
+  id         String    @id @default(uuid())
+  serviceId  String
+  price      Decimal   @db.Decimal(12, 2)
+  validFrom  DateTime
+  validTo    DateTime?
+  source     String
+  createdAt  DateTime  @default(now())
+  service    Service   @relation(fields: [serviceId], references: [id])
+
+  @@index([serviceId, validFrom, validTo])
+}
+
+model ServicePricingProfile {
+  id             String       @id @default(uuid())
+  serviceId      String
+  code           String
+  name           String
+  sortOrder      Int          @default(0)
+  mxnPrice       Decimal?     @db.Decimal(12, 2)
+  usdPrice       Decimal?     @db.Decimal(12, 2)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  service        Service      @relation(fields: [serviceId], references: [id])
+  quotationItems QuotationItem[]
+  versions       ServicePricingProfileVersion[]
+
+  @@unique([serviceId, code, name])
+  @@index([serviceId])
+}
+
+model ServicePricingProfileVersion {
+  id               String                @id @default(uuid())
+  pricingProfileId String
+  mxnPrice         Decimal?              @db.Decimal(12, 2)
+  usdPrice         Decimal?              @db.Decimal(12, 2)
+  validFrom        DateTime
+  validTo          DateTime?
+  source           String
+  createdAt        DateTime              @default(now())
+  pricingProfile   ServicePricingProfile @relation(fields: [pricingProfileId], references: [id])
+
+  @@unique([pricingProfileId, validFrom])
+  @@index([pricingProfileId, validFrom, validTo])
+}
+
+model ExchangeRateSetting {
+  id           String    @id @default(uuid())
+  baseCurrency String    @default("USD")
+  quoteCurrency String   @default("MXN")
+  rate         Decimal   @db.Decimal(12, 6)
+  source       String    @default("manual")
+  autoSync     Boolean   @default(true)
+  fetchedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([baseCurrency, quoteCurrency])
+}
+
+model Client {
+  id          String      @id @default(uuid())
+  legalName   String
+  commercialName String?
+  rfc         String      @unique
+  address     String?
+  city        String?
+  state       String?
+  country     String?     @default("MX")
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  deletedAt   DateTime?
+  contacts    Contact[]
+  quotations  Quotation[]
+
+  @@index([deletedAt])
+}
+
+model Contact {
+  id         String   @id @default(uuid())
+  clientId   String
+  fullName   String
+  email      String?
+  phone      String?
+  position   String?
+  isPrimary  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  client     Client   @relation(fields: [clientId], references: [id])
+
+  @@index([clientId])
+}
+
+model Quotation {
+  id               String             @id @default(uuid())
+  folio            String             @unique
+  clientId         String
+  pipelineId       String?
+  stageId          String?
+  status           QuotationStatus    @default(NUEVA)
+  title            String
+  notes            String?
+  durationOfWork   String?
+  termsAndConditions String?
+  commercialSections Json?
+  subtotal         Decimal            @db.Decimal(12, 2)
+  tax              Decimal            @db.Decimal(12, 2)
+  total            Decimal            @db.Decimal(12, 2)
+  currency         String             @default("MXN")
+  pdfFileName      String?
+  createdById      String
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  deletedAt        DateTime?
+  client           Client             @relation(fields: [clientId], references: [id])
+  pipeline         Pipeline?          @relation(fields: [pipelineId], references: [id])
+  stage            DealStage?         @relation(fields: [stageId], references: [id])
+  createdBy        User               @relation("QuotationOwner", fields: [createdById], references: [id])
+  items            QuotationItem[]
+  specialConsiderations QuotationSpecialConsideration[]
+  history          QuotationHistory[]
+  activities       Activity[]
+
+  @@index([clientId, status, createdAt])
+  @@index([pipelineId, stageId])
+}
+
+model QuotationSpecialConsideration {
+  id          String                   @id @default(uuid())
+  quotationId String
+  type        SpecialConsiderationType
+  concept     String?
+  quantity    Int                      @default(1)
+  percentage  Decimal?                 @db.Decimal(8, 4)
+  location    String?
+  mxnAmount   Decimal?                 @db.Decimal(12, 2)
+  usdAmount   Decimal?                 @db.Decimal(12, 2)
+  sortOrder   Int                      @default(0)
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+  quotation   Quotation                @relation(fields: [quotationId], references: [id])
+
+  @@index([quotationId, type, sortOrder])
+}
+
+model SpecialConsiderationCatalog {
+  id          String                   @id @default(uuid())
+  type        SpecialConsiderationType
+  concept     String?
+  quantity    Int                      @default(1)
+  percentage  Decimal?                 @db.Decimal(8, 4)
+  location    String?
+  mxnAmount   Decimal?                 @db.Decimal(12, 2)
+  usdAmount   Decimal?                 @db.Decimal(12, 2)
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+
+  @@index([type, concept])
+  @@index([type, location])
+}
+
+model QuotationTemplateSetting {
+  id           String   @id @default(uuid())
+  name         String   @unique @default("default")
+  sections     Json
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model ServiceTemplate {
+  id                    String   @id @default(uuid())
+  name                  String   @unique
+  items                 Json
+  commercialSections    Json?
+  specialConsiderations Json?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  deletedAt             DateTime?
+
+  @@index([deletedAt])
+}
+
+model WorkItemCatalog {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  @@index([deletedAt])
+}
+
+model QuotationItem {
+  id                String    @id @default(uuid())
+  quotationId       String
+  serviceId         String?
+  pricingProfileId  String?
+  serviceCode       String
+  serviceName       String
+  categoryName      String
+  pricingProfileName String?
+  quantity          Decimal   @db.Decimal(12, 2)
+  unitPrice         Decimal   @db.Decimal(12, 2)
+  totalPrice        Decimal   @db.Decimal(12, 2)
+  exchangeRateUsed  Decimal?  @db.Decimal(12, 6)
+  priceOriginCurrency String?
+  priceVersionId    String?
+  quotation         Quotation @relation(fields: [quotationId], references: [id])
+  service           Service?  @relation(fields: [serviceId], references: [id])
+  pricingProfile    ServicePricingProfile? @relation(fields: [pricingProfileId], references: [id])
+
+  @@index([quotationId])
+}
+
+model QuotationHistory {
+  id           String          @id @default(uuid())
+  quotationId  String
+  actorUserId  String?
+  eventType    String
+  fromStatus   QuotationStatus?
+  toStatus     QuotationStatus?
+  payload      Json?
+  createdAt    DateTime        @default(now())
+  quotation    Quotation       @relation(fields: [quotationId], references: [id])
+  actor        User?           @relation(fields: [actorUserId], references: [id])
+
+  @@index([quotationId, createdAt])
+}
+
+model Activity {
+  id           String       @id @default(uuid())
+  quotationId  String
+  userId       String?
+  type         ActivityType
+  description  String
+  createdAt    DateTime     @default(now())
+  payload      Json?
+  quotation    Quotation    @relation(fields: [quotationId], references: [id])
+  user         User?        @relation(fields: [userId], references: [id])
+
+  @@index([quotationId, createdAt])
+}

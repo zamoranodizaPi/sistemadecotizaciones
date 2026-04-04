@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cotizaciones-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cotizaciones
+      POSTGRES_USER: cotizaciones
+      POSTGRES_PASSWORD: cotizaciones
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: ./apps/api
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://cotizaciones:cotizaciones@postgres:5432/cotizaciones?schema=public
+      JWT_SECRET: change_me
+      PORT: 3001
+    ports:
+      - "3001:3001"
+
+  web:
+    build:
+      context: ./apps/web
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
+

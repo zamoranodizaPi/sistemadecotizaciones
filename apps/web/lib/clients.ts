@@ -7,7 +7,7 @@ export function mapClientsForUi(clients: ClientResponse) {
     legalName: client.legalName,
     commercialName: client.commercialName || '',
     segment: client.commercialName || 'Cuenta empresarial',
-    rfc: client.rfc,
+    rfc: client.rfc || '',
     address: client.address || '',
     contacts: client.contacts.map((contact) => ({
       id: contact.id,

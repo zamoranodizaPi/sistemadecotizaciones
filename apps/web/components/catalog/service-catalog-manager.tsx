@@ -184,11 +184,13 @@ export function ServiceCatalogManager() {
     setName(template.name);
     setTemplateType(template.templateType || 'Servicio');
     setSupplies(
-      template.items.map((item) => ({
-        serviceId: item.serviceId,
-        pricingProfileId: item.pricingProfileId,
-        quantity: String(item.quantity),
-      })),
+      template.items
+        .filter((item) => item.serviceId && item.pricingProfileId)
+        .map((item) => ({
+          serviceId: item.serviceId as string,
+          pricingProfileId: item.pricingProfileId as string,
+          quantity: String(item.quantity),
+        })),
     );
     setActivitiesText(extractActivities(template.commercialSections).join('\n'));
   }

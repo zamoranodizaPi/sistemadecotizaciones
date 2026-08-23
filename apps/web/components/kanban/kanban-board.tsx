@@ -2,7 +2,7 @@
 
 import { Download, Grip } from 'lucide-react';
 import { useMemo } from 'react';
-import { useGeneratePdf, useKanban, useMoveQuotation, usePipelineSummary } from '@/lib/api/hooks';
+import { useGeneratePdf, useGenerateSuggestedWordReport, useKanban, useMoveQuotation, usePipelineSummary } from '@/lib/api/hooks';
 import { buildKanbanColumns } from '@/lib/quotations';
 import type { QuotationStatus } from '@/lib/api/types';
 import { convertCurrencyAmount, formatCompactCurrency, formatCurrency, getAvatarTone, getInitials } from '@/lib/utils';
@@ -46,6 +46,7 @@ export function KanbanBoard() {
   const pipelineQuery = usePipelineSummary();
   const moveMutation = useMoveQuotation();
   const pdfMutation = useGeneratePdf();
+  const suggestedWordReportMutation = useGenerateSuggestedWordReport();
   const { displayCurrency, exchangeRate } = useDisplaySettings();
 
   const columns = useMemo(
@@ -61,6 +62,14 @@ export function KanbanBoard() {
     const response = await pdfMutation.mutateAsync(id);
     const link = document.createElement('a');
     link.href = `data:application/pdf;base64,${response.file}`;
+    link.download = response.fileName;
+    link.click();
+  }
+
+  async function downloadSuggestedWordReport(id: string) {
+    const response = await suggestedWordReportMutation.mutateAsync(id);
+    const link = document.createElement('a');
+    link.href = `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${response.file}`;
     link.download = response.fileName;
     link.click();
   }
@@ -248,7 +257,7 @@ export function KanbanBoard() {
                         Vendedor: {deal.owner}
                       </p>
                       <p className="mt-3 line-clamp-2 text-xs text-[var(--color-text-muted)]">{deal.lastActivity}</p>
-                      <div className="mt-3">
+                      <div className="mt-3 flex flex-wrap gap-2">
                         <button
                           type="button"
                           onClick={() => downloadPdf(deal.id)}
@@ -257,6 +266,16 @@ export function KanbanBoard() {
                           <Download className="h-3.5 w-3.5" />
                           PDF
                         </button>
+                        {column.code === 'ACEPTADA' ? (
+                          <button
+                            type="button"
+                            onClick={() => downloadSuggestedWordReport(deal.id)}
+                            className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-[11px] font-medium text-[var(--color-text)]"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            Reporte word
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   ))

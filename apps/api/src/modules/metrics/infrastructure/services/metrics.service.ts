@@ -45,10 +45,12 @@ export class MetricsService {
         quotation.client.legalName,
         (revenueByClient.get(quotation.client.legalName) || 0) + Number(quotation.total),
       );
-      pipeline.set(
-        quotation.status,
-        (pipeline.get(quotation.status) || 0) + Number(quotation.total),
-      );
+      if (quotation.stageId) {
+        pipeline.set(
+          quotation.status,
+          (pipeline.get(quotation.status) || 0) + Number(quotation.total),
+        );
+      }
 
       for (const item of quotation.items) {
         services.set(item.supplyName, (services.get(item.supplyName) || 0) + Number(item.quantity));

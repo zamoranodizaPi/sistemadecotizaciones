@@ -32,8 +32,9 @@ export class CreateClientDto {
   @IsString()
   commercialName?: string;
 
+  @IsOptional()
   @IsString()
-  rfc!: string;
+  rfc?: string;
 
   @IsOptional()
   @IsString()
@@ -53,8 +54,9 @@ export class UpdateClientDto {
   @IsString()
   commercialName?: string;
 
+  @IsOptional()
   @IsString()
-  rfc!: string;
+  rfc?: string;
 
   @IsOptional()
   @IsString()
@@ -74,8 +76,9 @@ export class CloneClientDto {
   @IsString()
   commercialName?: string;
 
+  @IsOptional()
   @IsString()
-  rfc!: string;
+  rfc?: string;
 
   @IsOptional()
   @IsString()

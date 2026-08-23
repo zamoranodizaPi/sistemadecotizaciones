@@ -9,7 +9,8 @@
     "lint": "eslint \"src/**/*.ts\"",
     "format": "prettier --write \"src/**/*.ts\" \"prisma/**/*.prisma\"",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "test:ai-suggest": "node scripts/test-ai-suggest-quote.js"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.2",
@@ -22,6 +23,7 @@
     "bcrypt": "^5.1.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
+    "docx": "^9.6.1",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "puppeteer": "^24.6.1",
@@ -44,4 +46,3 @@
     "typescript": "^5.5.4"
   }
 }
-

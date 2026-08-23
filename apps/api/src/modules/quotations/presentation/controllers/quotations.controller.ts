@@ -167,6 +167,18 @@ export class QuotationsController {
     return this.quotationsService.duplicateQuotation(id, user.userId);
   }
 
+  @Post(':id/learn')
+  @Roles('ADMIN', 'SALES')
+  learn(@Param('id') id: string) {
+    return this.quotationsService.learnQuotation(id);
+  }
+
+  @Post('learn-all')
+  @Roles('ADMIN')
+  rebuildLearning() {
+    return this.quotationsService.rebuildLearningFromQuotations();
+  }
+
   @Post(':id/mark-sent')
   @Roles('ADMIN', 'SALES')
   markSent(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
@@ -232,6 +244,16 @@ export class QuotationsController {
   @Post(':id/pdf/simple')
   pdfSimple(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.quotationsService.generateSimplifiedPdf(id, user.userId);
+  }
+
+  @Post(':id/report-word')
+  reportWord(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.quotationsService.generateWordReport(id, user.userId);
+  }
+
+  @Post(':id/report-word/suggested')
+  suggestedReportWord(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.quotationsService.generateSuggestedWordReport(id, user.userId);
   }
 
   @Delete(':id')

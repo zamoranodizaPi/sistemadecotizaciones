@@ -28,7 +28,9 @@ export class CatalogService {
     return normalized || undefined;
   }
 
-  listCatalog() {
+  async listCatalog() {
+    await this.syncActivityCatalogToConceptCategory();
+
     return this.prisma.category.findMany({
       where: { deletedAt: null },
       include: {
@@ -54,6 +56,258 @@ export class CatalogService {
       },
       orderBy: { name: 'asc' },
     });
+  }
+
+  async syncActivityCatalogToConceptCategory() {
+    const activities = await this.prisma.activityCatalog.findMany({
+      where: { deletedAt: null },
+      orderBy: [{ createdAt: 'asc' }, { name: 'asc' }],
+    });
+
+    const category = await this.prisma.category.upsert({
+      where: { code: 'ACT' },
+      update: {
+        name: 'Actividades',
+        description: 'Conceptos derivados del catálogo de actividades',
+        deletedAt: null,
+      },
+      create: {
+        code: 'ACT',
+        name: 'Actividades',
+        description: 'Conceptos derivados del catálogo de actividades',
+      },
+    });
+
+    const existingSupplies = await this.prisma.supply.findMany({
+      where: { categoryId: category.id },
+      include: { pricingProfiles: true },
+      orderBy: [{ createdAt: 'asc' }, { name: 'asc' }],
+    });
+    const allSupplyCodes = await this.prisma.supply.findMany({
+      select: {
+        id: true,
+        categoryId: true,
+        code: true,
+      },
+    });
+    const supplyByCode = new Map(allSupplyCodes.map((supply) => [supply.code, supply]));
+    const usedSupplyCodes = new Set(allSupplyCodes.map((supply) => supply.code));
+
+    const activeNames = new Set<string>();
+    let nextSequence =
+      allSupplyCodes
+        .map((supply) => Number(supply.code.replace(/^ACT-/, '')))
+        .filter((value) => Number.isFinite(value))
+        .reduce((max, current) => Math.max(max, current), 0) + 1;
+    const nextActivityCode = () => {
+      let code = `ACT-${String(nextSequence++).padStart(2, '0')}`;
+      while (usedSupplyCodes.has(code)) {
+        code = `ACT-${String(nextSequence++).padStart(2, '0')}`;
+      }
+      return code;
+    };
+
+    for (const activity of activities) {
+      activeNames.add(activity.name);
+
+      const activityCode = activity.code?.trim() || undefined;
+      const matchedSupply =
+        existingSupplies.find((supply) => supply.name === activity.name) ||
+        (activityCode
+          ? existingSupplies.find((supply) => supply.code === activityCode)
+          : undefined);
+      const requestedCodeOwner = activityCode ? supplyByCode.get(activityCode) : undefined;
+      const canUseActivityCode =
+        activityCode &&
+        (!requestedCodeOwner || requestedCodeOwner.id === matchedSupply?.id);
+      const code = canUseActivityCode ? activityCode : matchedSupply?.code || nextActivityCode();
+
+      const supply = matchedSupply
+        ? await this.prisma.supply.update({
+            where: { id: matchedSupply.id },
+            data: {
+              categoryId: category.id,
+              code,
+              name: activity.name,
+              description: 'Actividad cotizable',
+              unit: 'actividad',
+              relatedWork: activity.name,
+              deletedAt: null,
+            },
+          })
+        : await this.prisma.supply.upsert({
+            where: { code },
+            update: {
+              categoryId: category.id,
+              name: activity.name,
+              description: 'Actividad cotizable',
+              unit: 'actividad',
+              relatedWork: activity.name,
+              deletedAt: null,
+            },
+            create: {
+              categoryId: category.id,
+              code,
+              name: activity.name,
+              description: 'Actividad cotizable',
+              unit: 'actividad',
+              relatedWork: activity.name,
+            },
+          });
+      usedSupplyCodes.add(code);
+      supplyByCode.set(code, { id: supply.id, categoryId: supply.categoryId, code: supply.code });
+
+      if (!matchedSupply) {
+        existingSupplies.push({
+          ...supply,
+          pricingProfiles: [],
+        });
+      }
+
+      if (activity.code !== code || activity.unitPrice === null) {
+        await this.prisma.activityCatalog.update({
+          where: { id: activity.id },
+          data: {
+            code,
+            unitPrice: activity.unitPrice ?? 0,
+          },
+        });
+      }
+
+      const baseProfile = await this.prisma.supplyPricingProfile.findFirst({
+        where: {
+          supplyId: supply.id,
+          code: 'BASE',
+        },
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      });
+      const unitPrice = Number(activity.unitPrice ?? 0);
+
+      if (baseProfile) {
+        await this.prisma.supplyPricingProfile.update({
+          where: { id: baseProfile.id },
+          data: {
+            name: 'Actividad base',
+            sortOrder: 0,
+            mxnPrice: unitPrice,
+            usdPrice: 0,
+          },
+        });
+      } else {
+        await this.prisma.supplyPricingProfile.upsert({
+          where: {
+            supplyId_code_name: {
+              supplyId: supply.id,
+              code: 'BASE',
+              name: 'Actividad base',
+            },
+          },
+          update: {
+            sortOrder: 0,
+            mxnPrice: unitPrice,
+            usdPrice: 0,
+          },
+          create: {
+            supplyId: supply.id,
+            code: 'BASE',
+            name: 'Actividad base',
+            sortOrder: 0,
+            mxnPrice: unitPrice,
+            usdPrice: 0,
+          },
+        });
+      }
+    }
+
+    const staleSupplies = existingSupplies.filter(
+      (supply) => supply.code.startsWith('ACT-') && !activeNames.has(supply.name),
+    );
+    await Promise.all(
+      staleSupplies.map((supply) =>
+        this.prisma.supply.update({
+          where: { id: supply.id },
+          data: { deletedAt: new Date() },
+        }),
+      ),
+    );
+  }
+
+  async ensureActivityConcept(input: { name: string; code?: string; unitPrice?: number }) {
+    const normalizedName = input.name.trim();
+    const normalizedCode = input.code?.trim().toUpperCase() || undefined;
+    const normalizedUnitPrice = Number(input.unitPrice ?? 0);
+    if (!normalizedName) {
+      throw new BadRequestException('El nombre de la actividad es obligatorio.');
+    }
+
+    const existingByName = await this.prisma.activityCatalog.findUnique({
+      where: { name: normalizedName },
+    });
+    const existingByCode = normalizedCode
+      ? await this.prisma.activityCatalog.findUnique({
+          where: { code: normalizedCode },
+        })
+      : null;
+    const hasConflictingMatches =
+      Boolean(existingByName && existingByCode && existingByName.id !== existingByCode.id);
+    const existing =
+      hasConflictingMatches
+        ? existingByCode
+        : (existingByName || existingByCode);
+
+    if (existing) {
+      await this.prisma.activityCatalog.update({
+        where: { id: existing.id },
+        data: {
+          name: hasConflictingMatches ? existing.name : normalizedName,
+          code: normalizedCode || existing.code,
+          unitPrice: normalizedUnitPrice,
+          deletedAt: null,
+        },
+      });
+    } else {
+      await this.prisma.activityCatalog.create({
+        data: {
+          name: normalizedName,
+          code: normalizedCode,
+          unitPrice: normalizedUnitPrice,
+        },
+      });
+    }
+
+    await this.syncActivityCatalogToConceptCategory();
+
+    const supply = await this.prisma.supply.findFirst({
+      where: {
+        OR: [
+          { name: normalizedName },
+          ...(normalizedCode ? [{ code: normalizedCode }] : []),
+        ],
+        deletedAt: null,
+        category: { code: 'ACT' },
+      },
+      include: {
+        pricingProfiles: {
+          orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+        },
+        category: true,
+      },
+    });
+
+    if (!supply) {
+      throw new NotFoundException('No fue posible sincronizar la actividad en el catálogo.');
+    }
+
+    const pricingProfile = supply.pricingProfiles.find((profile) => profile.code === 'BASE') || supply.pricingProfiles[0];
+
+    if (!pricingProfile) {
+      throw new NotFoundException('La actividad no tiene perfil de precio base.');
+    }
+
+    return {
+      supply,
+      pricingProfile,
+    };
   }
 
   listDetectedServices() {

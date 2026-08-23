@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { Download, Eye, FileText, Filter, Search, Sparkles, Trash2 } from 'lucide-react';
 import {
   useConvertQuotationToWorkOrder,
@@ -8,7 +9,10 @@ import {
   useDuplicateQuotation,
   useGeneratePdf,
   useGenerateSimplePdf,
+  useGenerateSuggestedWordReport,
+  useGenerateWordReport,
   useClients,
+  useLearnQuotation,
   useMarkQuotationInteraction,
   useResolveQuotationApproval,
   useUpdateQuotation,
@@ -61,7 +65,11 @@ function statusVariant(status: string) {
   }
 }
 
+const CONTEXT_MENU_WIDTH = 260;
+const CONTEXT_MENU_HEIGHT = 420;
+
 export function QuotationsWorkspace() {
+  const searchParams = useSearchParams();
   const { user } = useSession();
   const { displayCurrency, exchangeRate } = useDisplaySettings();
   const canDelete = user.displayRole === 'ADMIN';
@@ -76,19 +84,29 @@ export function QuotationsWorkspace() {
   const [dealTitle, setDealTitle] = useState('');
   const [dealNotes, setDealNotes] = useState('');
   const [dealClientId, setDealClientId] = useState('');
+  const [dealContactName, setDealContactName] = useState('');
   const [columnWidths, setColumnWidths] = useState({
     folio: '140',
     cuenta: '170',
     estado: '120',
     vendedor: '150',
     actualizacion: '190',
+    subtotal: '130',
     total: '130',
-    acciones: '270',
+    acciones: '420',
   });
+  const [contextMenu, setContextMenu] = useState<{
+    quotationId: string;
+    x: number;
+    y: number;
+  } | null>(null);
   const quotationsQuery = useQuotations();
   const clientsQuery = useClients();
   const pdfMutation = useGeneratePdf();
   const simplePdfMutation = useGenerateSimplePdf();
+  const wordReportMutation = useGenerateWordReport();
+  const suggestedWordReportMutation = useGenerateSuggestedWordReport();
+  const learnMutation = useLearnQuotation();
   const deleteQuotationMutation = useDeleteQuotation();
   const duplicateQuotationMutation = useDuplicateQuotation();
   const interactionMutation = useMarkQuotationInteraction();
@@ -96,6 +114,7 @@ export function QuotationsWorkspace() {
   const convertToWorkOrderMutation = useConvertQuotationToWorkOrder();
   const updateQuotationMutation = useUpdateQuotation();
   const commercialMutation = useUpdateQuotationCommercial();
+  const [learningMessage, setLearningMessage] = useState<string | null>(null);
 
   const quotations = useMemo(
     () => (quotationsQuery.data ? mapQuotationsForUi(quotationsQuery.data) : []),
@@ -115,6 +134,21 @@ export function QuotationsWorkspace() {
   const selectedQuotation =
     filtered.find((quotation) => quotation.id === selectedId) ||
     quotations.find((quotation) => quotation.id === selectedId);
+  const selectedDealClient =
+    (clientsQuery.data || []).find((client) => client.id === dealClientId) || null;
+  const availableDealContacts = selectedDealClient?.contacts || [];
+  const highlightedQuotationId = searchParams.get('selected');
+
+  useEffect(() => {
+    const selectedFromUrl = searchParams.get('selected');
+    if (!selectedFromUrl) {
+      return;
+    }
+
+    if (quotations.some((quotation) => quotation.id === selectedFromUrl)) {
+      setSelectedId(selectedFromUrl);
+    }
+  }, [quotations, searchParams]);
 
   useEffect(() => {
     if (!selectedQuotation) {
@@ -125,6 +159,7 @@ export function QuotationsWorkspace() {
       setDealTitle('');
       setDealNotes('');
       setDealClientId('');
+      setDealContactName('');
       return;
     }
 
@@ -133,7 +168,22 @@ export function QuotationsWorkspace() {
     setDealTitle(selectedQuotation.title || '');
     setDealNotes(selectedQuotation.notes || '');
     setDealClientId(selectedQuotation.clientId || '');
+    setDealContactName(selectedQuotation.contactName || '');
   }, [selectedQuotation]);
+
+  useEffect(() => {
+    if (!selectedDealClient) {
+      return;
+    }
+
+    if (!availableDealContacts.length) {
+      return;
+    }
+
+    if (!dealContactName) {
+      setDealContactName(availableDealContacts[0].fullName);
+    }
+  }, [availableDealContacts, dealContactName, selectedDealClient]);
 
   async function downloadPdf(id: string) {
     const response = await pdfMutation.mutateAsync(id);
@@ -147,6 +197,22 @@ export function QuotationsWorkspace() {
     const response = await simplePdfMutation.mutateAsync(id);
     const link = document.createElement('a');
     link.href = `data:application/pdf;base64,${response.file}`;
+    link.download = response.fileName;
+    link.click();
+  }
+
+  async function downloadWordReport(id: string) {
+    const response = await wordReportMutation.mutateAsync(id);
+    const link = document.createElement('a');
+    link.href = `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${response.file}`;
+    link.download = response.fileName;
+    link.click();
+  }
+
+  async function downloadSuggestedWordReport(id: string) {
+    const response = await suggestedWordReportMutation.mutateAsync(id);
+    const link = document.createElement('a');
+    link.href = `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${response.file}`;
     link.download = response.fileName;
     link.click();
   }
@@ -172,11 +238,58 @@ export function QuotationsWorkspace() {
     await updateQuotationMutation.mutateAsync({
       id: selectedQuotation.id,
       clientId: dealClientId || undefined,
+      contactName: dealContactName || undefined,
       title: dealTitle,
       notes: dealNotes || undefined,
     });
     setEditingDeal(false);
   }
+
+  async function sendToLearning(id: string) {
+    try {
+      await learnMutation.mutateAsync(id);
+      setLearningMessage('La cotización ya está en aprendizaje para mejorar futuras sugerencias.');
+    } catch (error) {
+      setLearningMessage(
+        error instanceof Error ? error.message : 'No fue posible enviar la cotización a aprendizaje.',
+      );
+    }
+  }
+
+  useEffect(() => {
+    if (!learningMessage) {
+      return;
+    }
+
+    const timer = setTimeout(() => setLearningMessage(null), 4000);
+    return () => clearTimeout(timer);
+  }, [learningMessage]);
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return;
+    }
+
+    function closeMenu() {
+      setContextMenu(null);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setContextMenu(null);
+      }
+    }
+
+    window.addEventListener('click', closeMenu);
+    window.addEventListener('resize', closeMenu);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('click', closeMenu);
+      window.removeEventListener('resize', closeMenu);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [contextMenu]);
 
   async function removeDeal() {
     if (!selectedQuotation || !canDelete) {
@@ -231,6 +344,18 @@ export function QuotationsWorkspace() {
     await convertToWorkOrderMutation.mutateAsync(id);
   }
 
+  function openContextMenu(event: MouseEvent, quotationId: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    const nextX = Math.max(12, Math.min(event.clientX, window.innerWidth - CONTEXT_MENU_WIDTH - 12));
+    const nextY = Math.max(12, Math.min(event.clientY, window.innerHeight - CONTEXT_MENU_HEIGHT - 12));
+    setContextMenu({
+      quotationId,
+      x: nextX,
+      y: nextY,
+    });
+  }
+
   function resizeColumn(key: keyof typeof columnWidths, startX: number) {
     const initialWidth = Number(columnWidths[key] || 120);
 
@@ -249,6 +374,396 @@ export function QuotationsWorkspace() {
 
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
+  }
+
+  function closeContextMenu() {
+    setContextMenu(null);
+  }
+
+  function renderQuotationActions(
+    quotation: (typeof filtered)[number],
+    mode: 'row' | 'context' = 'row',
+  ) {
+    const buttonClassName = mode === 'row' ? 'px-2 text-[11px]' : 'w-full justify-start px-3 text-xs';
+    const contextItemClassName = 'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-[var(--color-text)] transition hover:bg-[var(--color-panel-subtle)]';
+
+    return (
+      <>
+        {mode === 'context' ? (
+          <button
+            type="button"
+            className={contextItemClassName}
+            onClick={() => {
+              setSelectedId(quotation.id);
+              closeContextMenu();
+            }}
+          >
+            <Eye className="h-4 w-4" />
+            Preview
+          </button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            className={buttonClassName}
+            onClick={() => {
+              setSelectedId(quotation.id);
+              closeContextMenu();
+            }}
+          >
+            <Eye className="h-4 w-4" />
+            Preview
+          </Button>
+        )}
+        {mode === 'context' ? (
+          <button
+            type="button"
+            className={contextItemClassName}
+            onClick={() => {
+              closeContextMenu();
+              void downloadPdf(quotation.id);
+            }}
+          >
+            <Download className="h-4 w-4" />
+            PDF
+          </button>
+        ) : (
+          <Button
+            variant="secondary"
+            size="sm"
+            className={buttonClassName}
+            onClick={() => {
+              closeContextMenu();
+              void downloadPdf(quotation.id);
+            }}
+          >
+            <Download className="h-4 w-4" />
+            PDF
+          </Button>
+        )}
+        {mode === 'context' ? (
+          <button
+            type="button"
+            className={contextItemClassName}
+            onClick={() => {
+              closeContextMenu();
+              void downloadSimplePdf(quotation.id);
+            }}
+          >
+            <Download className="h-4 w-4" />
+            PDF simple
+          </button>
+        ) : (
+          <Button
+            variant="secondary"
+            size="sm"
+            className={buttonClassName}
+            onClick={() => {
+              closeContextMenu();
+              void downloadSimplePdf(quotation.id);
+            }}
+          >
+            <Download className="h-4 w-4" />
+            PDF simple
+          </Button>
+        )}
+        {quotation.status === 'ACEPTADA'
+          ? mode === 'context' ? (
+              <button
+                type="button"
+                className={contextItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  void downloadWordReport(quotation.id);
+                }}
+              >
+                <Download className="h-4 w-4" />
+                Word
+              </button>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                className={buttonClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  void downloadWordReport(quotation.id);
+                }}
+              >
+                <Download className="h-4 w-4" />
+                Word
+              </Button>
+            )
+          : null}
+        {quotation.status === 'ACEPTADA'
+          ? mode === 'context' ? (
+              <button
+                type="button"
+                className={contextItemClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  void downloadSuggestedWordReport(quotation.id);
+                }}
+              >
+                <Download className="h-4 w-4" />
+                Reporte sugerido
+              </button>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                className={buttonClassName}
+                onClick={() => {
+                  closeContextMenu();
+                  void downloadSuggestedWordReport(quotation.id);
+                }}
+              >
+                <Download className="h-4 w-4" />
+                Reporte sugerido
+              </Button>
+            )
+          : null}
+        {canEdit ? (
+          mode === 'context' ? (
+            <Link
+              href={`/quotations/new?edit=${quotation.id}`}
+              onClick={() => closeContextMenu()}
+              className={contextItemClassName}
+            >
+              <FileText className="h-4 w-4" />
+              Editar
+            </Link>
+          ) : (
+            <Link
+              href={`/quotations/new?edit=${quotation.id}`}
+              onClick={() => closeContextMenu()}
+              className="inline-flex h-9 items-center gap-2 rounded-xl border border-[var(--color-border)] bg-white px-2 text-[11px] text-[var(--color-text)] transition hover:bg-[var(--color-panel-subtle)]"
+            >
+              <FileText className="h-4 w-4" />
+              Editar
+            </Link>
+          )
+        ) : null}
+        {canEdit ? (
+          mode === 'context' ? (
+            <button
+              type="button"
+              className={contextItemClassName}
+              onClick={() => {
+                closeContextMenu();
+                void duplicateDeal(quotation.id);
+              }}
+            >
+              <Sparkles className="h-4 w-4" />
+              Versionar
+            </button>
+          ) : (
+            <Button
+              variant="secondary"
+              size="sm"
+              className={buttonClassName}
+              onClick={() => {
+                closeContextMenu();
+                void duplicateDeal(quotation.id);
+              }}
+            >
+              <Sparkles className="h-4 w-4" />
+              Versionar
+            </Button>
+          )
+        ) : null}
+        {canEdit ? (
+          mode === 'context' ? (
+            <button
+              type="button"
+              className={contextItemClassName}
+              onClick={() => {
+                closeContextMenu();
+                void markInteraction(quotation.id, 'sent');
+              }}
+            >
+              Enviar
+            </button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={buttonClassName}
+              onClick={() => {
+                closeContextMenu();
+                void markInteraction(quotation.id, 'sent');
+              }}
+            >
+              Enviar
+            </Button>
+          )
+        ) : null}
+        {canEdit ? (
+          mode === 'context' ? (
+            <button
+              type="button"
+              className={contextItemClassName}
+              onClick={() => {
+                closeContextMenu();
+                void markInteraction(quotation.id, 'viewed');
+              }}
+            >
+              Vista
+            </button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={buttonClassName}
+              onClick={() => {
+                closeContextMenu();
+                void markInteraction(quotation.id, 'viewed');
+              }}
+            >
+              Vista
+            </Button>
+          )
+        ) : null}
+        {canEdit ? (
+          mode === 'context' ? (
+            <button
+              type="button"
+              className={contextItemClassName}
+              onClick={() => {
+                closeContextMenu();
+                void markInteraction(quotation.id, 'accepted');
+              }}
+            >
+              Aceptar
+            </button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={buttonClassName}
+              onClick={() => {
+                closeContextMenu();
+                void markInteraction(quotation.id, 'accepted');
+              }}
+            >
+              Aceptar
+            </Button>
+          )
+        ) : null}
+        {canEdit ? (
+          mode === 'context' ? (
+            <button
+              type="button"
+              className={contextItemClassName}
+              onClick={() => {
+                closeContextMenu();
+                void convertToWorkOrder(quotation.id);
+              }}
+            >
+              OT
+            </button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={buttonClassName}
+              onClick={() => {
+                closeContextMenu();
+                void convertToWorkOrder(quotation.id);
+              }}
+            >
+              OT
+            </Button>
+          )
+        ) : null}
+        {canEdit ? (
+          mode === 'context' ? (
+            <button
+              type="button"
+              className={contextItemClassName}
+              onClick={() => {
+                closeContextMenu();
+                void sendToLearning(quotation.id);
+              }}
+              disabled={learnMutation.isPending}
+            >
+              <Sparkles className="h-4 w-4" />
+              Aprender
+            </button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={buttonClassName}
+              onClick={() => {
+                closeContextMenu();
+                void sendToLearning(quotation.id);
+              }}
+              disabled={learnMutation.isPending}
+            >
+              <Sparkles className="h-4 w-4" />
+              Aprender
+            </Button>
+          )
+        ) : null}
+        {quotation.requiresApproval && user.displayRole === 'ADMIN' ? (
+          mode === 'context' ? (
+            <button
+              type="button"
+              className={contextItemClassName}
+              onClick={() => {
+                closeContextMenu();
+                void resolveApproval(quotation.id, 'approve');
+              }}
+            >
+              Aprobar desc.
+            </button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={buttonClassName}
+              onClick={() => {
+                closeContextMenu();
+                void resolveApproval(quotation.id, 'approve');
+              }}
+            >
+              Aprobar desc.
+            </Button>
+          )
+        ) : null}
+        {canDelete ? (
+          mode === 'context' ? (
+            <button
+              type="button"
+              className={contextItemClassName}
+              onClick={() => {
+                closeContextMenu();
+                void removeDealById(quotation.id);
+              }}
+              disabled={deleteQuotationMutation.isPending}
+            >
+              <Trash2 className="h-4 w-4" />
+              Eliminar
+            </button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={buttonClassName}
+              onClick={() => {
+                closeContextMenu();
+                void removeDealById(quotation.id);
+              }}
+              disabled={deleteQuotationMutation.isPending}
+            >
+              <Trash2 className="h-4 w-4" />
+              Eliminar
+            </Button>
+          )
+        ) : null}
+      </>
+    );
   }
 
   if (quotationsQuery.isLoading) {
@@ -280,6 +795,11 @@ export function QuotationsWorkspace() {
             title="Cotización actualizada"
             description="La duración de trabajos y términos quedaron guardados."
           />
+        </div>
+      ) : null}
+      {learningMessage ? (
+        <div className="fixed bottom-6 right-6 z-40">
+          <Toast title="Aprendizaje" description={learningMessage} />
         </div>
       ) : null}
 
@@ -346,8 +866,9 @@ export function QuotationsWorkspace() {
                   <col style={{ width: `${columnWidths.estado || 120}px` }} />
                   <col style={{ width: `${columnWidths.vendedor || 150}px` }} />
                   <col style={{ width: `${columnWidths.actualizacion || 190}px` }} />
+                  <col style={{ width: `${columnWidths.subtotal || 130}px` }} />
                   <col style={{ width: `${columnWidths.total || 130}px` }} />
-                  <col style={{ width: `${columnWidths.acciones || 270}px` }} />
+                  <col style={{ width: `${columnWidths.acciones || 420}px` }} />
                 </colgroup>
                 <thead className="bg-[var(--color-panel-subtle)] text-[var(--color-text-muted)]">
                   <tr>
@@ -357,6 +878,7 @@ export function QuotationsWorkspace() {
                       ['estado', 'Estado'],
                       ['vendedor', 'Vendedor'],
                       ['actualizacion', 'Actualización'],
+                      ['subtotal', 'Subtotal'],
                       ['total', 'Total'],
                       ['acciones', 'Acciones'],
                     ].map(([key, label]) => (
@@ -382,10 +904,25 @@ export function QuotationsWorkspace() {
                 </thead>
                 <tbody>
             {filtered.map((quotation) => (
-              <tr key={quotation.id} className="border-t border-[var(--color-border)] transition hover:bg-[var(--color-panel-subtle)]">
+              <tr
+                key={quotation.id}
+                onContextMenu={(event) => openContextMenu(event, quotation.id)}
+                className={`border-t border-[var(--color-border)] transition hover:bg-[var(--color-panel-subtle)] ${
+                  quotation.id === highlightedQuotationId
+                    ? 'bg-[color:rgba(249,115,22,0.10)] ring-1 ring-inset ring-[var(--color-primary)]'
+                    : ''
+                }`}
+              >
                 <td className="px-4 py-3 align-middle text-[var(--color-text)]">
                   <div>
-                    <p className="font-medium leading-none">{quotation.folio}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium leading-none">{quotation.folio}</p>
+                      {quotation.id === highlightedQuotationId ? (
+                        <span className="rounded-full bg-[var(--color-primary)] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white">
+                          Recién creada
+                        </span>
+                      ) : null}
+                    </div>
                     <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                       v{quotation.versionNumber} · {quotation.items} conceptos
                     </p>
@@ -418,75 +955,19 @@ export function QuotationsWorkspace() {
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 align-middle font-medium text-[var(--color-text)]">
                   {formatCurrency(
+                    convertCurrencyAmount(quotation.subtotal, quotation.currency, displayCurrency, exchangeRate),
+                    displayCurrency,
+                  )}
+                </td>
+                <td className="whitespace-nowrap px-4 py-3 align-middle font-medium text-[var(--color-text)]">
+                  {formatCurrency(
                     convertCurrencyAmount(quotation.total, quotation.currency, displayCurrency, exchangeRate),
                     displayCurrency,
                   )}
                 </td>
                 <td className="px-4 py-3 align-middle text-[var(--color-text)]">
                   <div className="flex flex-nowrap items-center gap-1">
-                    <Button variant="ghost" size="sm" className="px-2 text-[11px]" onClick={() => setSelectedId(quotation.id)}>
-                      <Eye className="h-4 w-4" />
-                      Preview
-                    </Button>
-                    <Button variant="secondary" size="sm" className="px-2 text-[11px]" onClick={() => downloadPdf(quotation.id)}>
-                      <Download className="h-4 w-4" />
-                      PDF
-                    </Button>
-                    <Button variant="secondary" size="sm" className="px-2 text-[11px]" onClick={() => downloadSimplePdf(quotation.id)}>
-                      <Download className="h-4 w-4" />
-                      PDF simple
-                    </Button>
-                    {canEdit ? (
-                      <Link href={`/quotations/new?edit=${quotation.id}`}>
-                        <Button variant="secondary" size="sm" className="px-2 text-[11px]">
-                          <FileText className="h-4 w-4" />
-                          Editar
-                        </Button>
-                      </Link>
-                    ) : null}
-                    {canEdit ? (
-                      <Button variant="secondary" size="sm" className="px-2 text-[11px]" onClick={() => duplicateDeal(quotation.id)}>
-                        <Sparkles className="h-4 w-4" />
-                        Versionar
-                      </Button>
-                    ) : null}
-                    {canEdit ? (
-                      <Button variant="ghost" size="sm" className="px-2 text-[11px]" onClick={() => markInteraction(quotation.id, 'sent')}>
-                        Enviar
-                      </Button>
-                    ) : null}
-                    {canEdit ? (
-                      <Button variant="ghost" size="sm" className="px-2 text-[11px]" onClick={() => markInteraction(quotation.id, 'viewed')}>
-                        Vista
-                      </Button>
-                    ) : null}
-                    {canEdit ? (
-                      <Button variant="ghost" size="sm" className="px-2 text-[11px]" onClick={() => markInteraction(quotation.id, 'accepted')}>
-                        Aceptar
-                      </Button>
-                    ) : null}
-                    {canEdit ? (
-                      <Button variant="ghost" size="sm" className="px-2 text-[11px]" onClick={() => convertToWorkOrder(quotation.id)}>
-                        OT
-                      </Button>
-                    ) : null}
-                    {quotation.requiresApproval && user.displayRole === 'ADMIN' ? (
-                      <Button variant="ghost" size="sm" className="px-2 text-[11px]" onClick={() => resolveApproval(quotation.id, 'approve')}>
-                        Aprobar desc.
-                      </Button>
-                    ) : null}
-                    {canDelete ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="px-2 text-[11px]"
-                        onClick={() => removeDealById(quotation.id)}
-                        disabled={deleteQuotationMutation.isPending}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Eliminar
-                      </Button>
-                    ) : null}
+                    {renderQuotationActions(quotation)}
                   </div>
                 </td>
               </tr>
@@ -497,6 +978,30 @@ export function QuotationsWorkspace() {
           </div>
         </CardContent>
       </Card>
+
+      {contextMenu ? (
+        <div className="fixed inset-0 z-50" onClick={closeContextMenu} onContextMenu={(event) => event.preventDefault()}>
+          <div
+            className="fixed min-w-[260px] max-h-[420px] overflow-y-auto rounded-2xl border border-[var(--color-border)] bg-white p-2 shadow-[0_20px_60px_rgba(15,23,42,0.18)]"
+            style={{
+              left: contextMenu.x,
+              top: contextMenu.y,
+            }}
+            onClick={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.preventDefault()}
+          >
+            <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-faint)]">
+              Acciones
+            </p>
+            <div className="flex flex-col gap-1">
+              {(() => {
+                const contextQuotation = quotations.find((quotation) => quotation.id === contextMenu.quotationId);
+                return contextQuotation ? renderQuotationActions(contextQuotation, 'context') : null;
+              })()}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <Modal
         open={selectedId !== null}
@@ -529,9 +1034,9 @@ export function QuotationsWorkspace() {
           <div className="space-y-4">
             <Card>
               <CardHeader title="Resumen" description="Snapshot listo para compartir" />
-              <CardContent className="space-y-4">
-                <div className="rounded-3xl bg-[var(--color-panel-subtle)] p-4">
-                  <p className="text-sm text-[var(--color-text-muted)]">Total</p>
+            <CardContent className="space-y-4">
+              <div className="rounded-3xl bg-[var(--color-panel-subtle)] p-4">
+                <p className="text-sm text-[var(--color-text-muted)]">Total</p>
                   <p className="mt-1 text-3xl font-semibold tracking-[-0.04em]">
                     {selectedQuotation
                       ? formatCurrency(
@@ -546,16 +1051,36 @@ export function QuotationsWorkspace() {
                       : '-'}
                   </p>
                   <p className="mt-3 text-xs uppercase tracking-[0.16em] text-[var(--color-text-faint)]">Responsable</p>
-                  <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-                    {selectedQuotation?.owner || 'Sin responsable'}
-                  </p>
-                </div>
+                <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+                  {selectedQuotation?.owner || 'Sin responsable'}
+                </p>
+              </div>
+              <div className="rounded-3xl border border-dashed border-[var(--color-border)] p-4">
+                <p className="text-xs uppercase tracking-[0.16em] text-[var(--color-text-muted)]">Servicio</p>
+                <p className="mt-1 text-sm text-[var(--color-text)]">
+                  {selectedQuotation?.serviceType || 'Sin servicio'}
+                </p>
+                <p className="mt-4 text-xs uppercase tracking-[0.16em] text-[var(--color-text-muted)]">Resumen ejecutivo</p>
+                <p className="mt-1 text-sm text-[var(--color-text)]">
+                  {selectedQuotation?.executiveSummary || 'Sin resumen ejecutivo capturado.'}
+                </p>
+              </div>
                 <Button className="w-full" onClick={() => selectedQuotation && downloadPdf(selectedQuotation.id)}>
                   Descargar PDF
                 </Button>
                 <Button variant="secondary" className="w-full" onClick={() => selectedQuotation && downloadSimplePdf(selectedQuotation.id)}>
                   Descargar PDF simplificado
                 </Button>
+                {selectedQuotation?.status === 'ACEPTADA' ? (
+                  <Button variant="secondary" className="w-full" onClick={() => selectedQuotation && downloadWordReport(selectedQuotation.id)}>
+                    Descargar Word
+                  </Button>
+                ) : null}
+                {selectedQuotation?.status === 'ACEPTADA' ? (
+                  <Button variant="secondary" className="w-full" onClick={() => selectedQuotation && downloadSuggestedWordReport(selectedQuotation.id)}>
+                    Descargar reporte sugerido
+                  </Button>
+                ) : null}
                 {canEdit ? (
                   <Button
                     variant="secondary"
@@ -576,6 +1101,15 @@ export function QuotationsWorkspace() {
                     Editar términos
                   </Button>
                 ) : null}
+                <Button
+                  variant="ghost"
+                  className="w-full"
+                  onClick={() => selectedQuotation && sendToLearning(selectedQuotation.id)}
+                  disabled={!selectedQuotation || learnMutation.isPending}
+                >
+                  <Sparkles className="h-4 w-4" />
+                  Enviar a aprendizaje
+                </Button>
                 {canDelete ? (
                   <Button
                     variant="danger"
@@ -619,7 +1153,7 @@ export function QuotationsWorkspace() {
         open={editingDeal}
         onClose={() => setEditingDeal(false)}
         title={selectedQuotation ? `Editar cotización ${selectedQuotation.folio}` : 'Editar cotización'}
-        description="Puedes actualizar cliente, título y notas sin salir de la tabla."
+        description="Puedes actualizar cliente, contacto, título y notas sin salir de la tabla."
       >
         <div className="space-y-4">
           <div>
@@ -636,6 +1170,22 @@ export function QuotationsWorkspace() {
           <div>
             <p className="mb-2 text-sm font-medium text-[var(--color-text)]">Título</p>
             <Input value={dealTitle} onChange={(event) => setDealTitle(event.target.value)} placeholder="Título de la cotización" />
+          </div>
+          <div>
+            <p className="mb-2 text-sm font-medium text-[var(--color-text)]">Nombre de contacto</p>
+            <Input
+              value={dealContactName}
+              onChange={(event) => setDealContactName(event.target.value)}
+              placeholder="Ej. Ing. Juan Pérez"
+              list={availableDealContacts.length ? 'quotation-contact-options' : undefined}
+            />
+            {availableDealContacts.length ? (
+              <datalist id="quotation-contact-options">
+                {availableDealContacts.map((contact) => (
+                  <option key={contact.id} value={contact.fullName} />
+                ))}
+              </datalist>
+            ) : null}
           </div>
           <div>
             <p className="mb-2 text-sm font-medium text-[var(--color-text)]">Notas</p>

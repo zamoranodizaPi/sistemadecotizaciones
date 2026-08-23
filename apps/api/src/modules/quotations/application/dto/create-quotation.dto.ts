@@ -12,11 +12,44 @@ import { Type } from 'class-transformer';
 import { ActivityType, SpecialConsiderationType } from '@prisma/client';
 
 class QuotationItemDto {
+  @IsOptional()
   @IsUUID()
-  serviceId!: string;
+  serviceId?: string;
 
+  @IsOptional()
   @IsUUID()
-  pricingProfileId!: string;
+  pricingProfileId?: string;
+
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  categoryName?: string;
+
+  @IsOptional()
+  @IsString()
+  pricingProfileName?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  partNumber?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  partQuantity?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  activityDays?: number;
 
   @IsNumber()
   @Min(1)
@@ -105,8 +138,17 @@ class SpecialConsiderationDto {
 }
 
 export class CreateQuotationDto {
+  @IsOptional()
   @IsUUID()
-  clientId!: string;
+  clientId?: string;
+
+  @IsOptional()
+  @IsString()
+  clientName?: string;
+
+  @IsOptional()
+  @IsString()
+  contactName?: string;
 
   @IsOptional()
   @IsUUID()
@@ -134,6 +176,16 @@ export class CreateQuotationDto {
   @IsOptional()
   @IsString()
   pricingRule?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  partCount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  finalChargeRate?: number;
 
   @IsOptional()
   @IsNumber()
@@ -205,6 +257,16 @@ export class UpdateQuotationCommercialDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  partCount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  finalChargeRate?: number;
+
+  @IsOptional()
+  @IsNumber()
   validityDays?: number;
 
   @IsOptional()
@@ -235,6 +297,10 @@ export class UpdateQuotationDto {
 
   @IsOptional()
   @IsString()
+  contactName?: string;
+
+  @IsOptional()
+  @IsString()
   title?: string;
 
   @IsOptional()
@@ -260,6 +326,16 @@ export class UpdateQuotationDto {
   @IsOptional()
   @IsString()
   pricingRule?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  partCount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  finalChargeRate?: number;
 
   @IsOptional()
   @IsNumber()
@@ -314,11 +390,29 @@ export class UpdateServiceCatalogDto {
 export class CreateWorkItemCatalogDto {
   @IsString()
   name!: string;
+
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  unitPrice?: number;
 }
 
 export class UpdateWorkItemCatalogDto {
   @IsString()
   name!: string;
+
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  unitPrice?: number;
 }
 
 export class CreateReusableTextBlockDto {

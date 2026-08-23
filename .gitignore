@@ -7,6 +7,7 @@ dist
 coverage
 apps/api/generated
 apps/api/prisma/dev.db
+apps/api/storage
 .DS_Store
 ._*
 *.tsbuildinfo

@@ -1,7 +1,24 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { ActivityType, ApprovalStatus, Prisma, QuotationStatus, SpecialConsiderationType, UserRole } from '@prisma/client';
+import { appendFile, mkdir } from 'fs/promises';
+import { dirname, resolve } from 'path';
+import {
+  ActivityType,
+  ApprovalStatus,
+  Prisma,
+  Quotation,
+  QuotationItem,
+  QuotationStatus,
+  SpecialConsiderationType,
+  UserRole,
+} from '@prisma/client';
+
+type QuotationWithRelations = Quotation & {
+  client?: { legalName: string | null };
+  items?: QuotationItem[];
+};
 import { PrismaService } from '../../../../shared/infrastructure/prisma.service';
 import { CatalogService } from '../../../catalog/infrastructure/services/catalog.service';
+import { AiLearningService } from '../../../ai-learning/infrastructure/services/ai-learning.service';
 import {
   CreateServiceCatalogDto,
   CreateReusableTextBlockDto,
@@ -17,6 +34,8 @@ import {
 } from '../../application/dto/create-quotation.dto';
 import { PdfService } from './pdf.service';
 import { PipelineService } from '../../../pipeline/infrastructure/services/pipeline.service';
+import { CompanyProfileService } from '../../../company-profile/infrastructure/services/company-profile.service';
+import { ReporteWordService } from './reporte-word.service';
 
 @Injectable()
 export class QuotationsService {
@@ -25,7 +44,73 @@ export class QuotationsService {
     private readonly catalogService: CatalogService,
     private readonly pdfService: PdfService,
     private readonly pipelineService: PipelineService,
+    private readonly aiLearningService: AiLearningService,
+    private readonly companyProfileService: CompanyProfileService,
+    private readonly reporteWordService: ReporteWordService,
   ) {}
+
+  private isFolioUniqueConflict(error: unknown) {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+      return false;
+    }
+
+    const target = Array.isArray(error.meta?.target)
+      ? error.meta?.target.map((value) => String(value))
+      : typeof error.meta?.target === 'string'
+        ? [error.meta.target]
+        : [];
+
+    return target.includes('folio');
+  }
+
+  private async getNextAvailableFolio(year = new Date().getFullYear()) {
+    const suffix = `-${year}`;
+    const latest = await this.prisma.quotation.findFirst({
+      where: {
+        folio: {
+          startsWith: 'COT.',
+          endsWith: suffix,
+        },
+      },
+      select: { folio: true },
+      orderBy: { folio: 'desc' },
+    });
+
+    const latestSequence = latest?.folio.match(/^COT\.(\d+)-\d{4}$/)?.[1];
+    let sequence = latestSequence ? Number(latestSequence) + 1 : 1;
+
+    while (true) {
+      const folio = `COT.${String(sequence).padStart(4, '0')}-${year}`;
+      const existing = await this.prisma.quotation.findUnique({
+        where: { folio },
+        select: { id: true },
+      });
+
+      if (!existing) {
+        return folio;
+      }
+
+      sequence += 1;
+    }
+  }
+
+  private async createQuotationWithResolvedFolio<T>(factory: (folio: string) => Promise<T>) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const folio = await this.getNextAvailableFolio();
+
+      try {
+        return await factory(folio);
+      } catch (error) {
+        if (this.isFolioUniqueConflict(error)) {
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    throw new ConflictException('No fue posible asignar un folio único para la cotización.');
+  }
 
   listQuotations() {
     return this.prisma.quotation.findMany({
@@ -81,7 +166,7 @@ export class QuotationsService {
     return this.prisma.quotationTemplateSetting.create({
       data: {
         name: 'default',
-        sections: this.toJsonSections(this.defaultCommercialSections()),
+        sections: this.toJsonSections(await this.defaultCommercialSections()),
       },
     });
   }
@@ -191,7 +276,8 @@ export class QuotationsService {
     });
   }
 
-  listWorkItemCatalog() {
+  async listWorkItemCatalog() {
+    await this.catalogService.syncActivityCatalogToConceptCategory();
     return this.prisma.activityCatalog.findMany({
       where: { deletedAt: null },
       orderBy: { name: 'asc' },
@@ -207,24 +293,39 @@ export class QuotationsService {
 
   async createWorkItemCatalog(dto: CreateWorkItemCatalogDto) {
     const name = this.normalizeWorkItemName(dto.name);
+    const code = dto.code?.trim().toUpperCase() || undefined;
+    const unitPrice = Number(dto.unitPrice || 0);
     const existing = await this.prisma.activityCatalog.findUnique({
       where: { name },
     });
+    const existingByCode = code
+      ? await this.prisma.activityCatalog.findUnique({
+          where: { code },
+        })
+      : null;
+
+    if (existingByCode && existingByCode.deletedAt === null && existingByCode.name !== name) {
+      throw new ConflictException('Ya existe una actividad con esa clave.');
+    }
 
     if (existing && existing.deletedAt === null) {
       throw new ConflictException('Ya existe un trabajo con ese nombre.');
     }
 
     if (existing) {
-      return this.prisma.activityCatalog.update({
+      const updated = await this.prisma.activityCatalog.update({
         where: { id: existing.id },
-        data: { name, deletedAt: null },
+        data: { name, code, unitPrice, deletedAt: null },
       });
+      await this.catalogService.syncActivityCatalogToConceptCategory();
+      return updated;
     }
 
-    return this.prisma.activityCatalog.create({
-      data: { name },
+    const created = await this.prisma.activityCatalog.create({
+      data: { name, code, unitPrice },
     });
+    await this.catalogService.syncActivityCatalogToConceptCategory();
+    return created;
   }
 
   async updateWorkItemCatalog(id: string, dto: UpdateWorkItemCatalogDto) {
@@ -237,9 +338,16 @@ export class QuotationsService {
     }
 
     const name = this.normalizeWorkItemName(dto.name);
+    const code = dto.code?.trim().toUpperCase() || undefined;
+    const unitPrice = dto.unitPrice === undefined ? undefined : Number(dto.unitPrice || 0);
     const duplicated = await this.prisma.activityCatalog.findUnique({
       where: { name },
     });
+    const duplicatedByCode = code
+      ? await this.prisma.activityCatalog.findUnique({
+          where: { code },
+        })
+      : null;
 
     if (duplicated && duplicated.id !== id && duplicated.deletedAt === null) {
       throw new ConflictException('Ya existe otro trabajo con ese nombre.');
@@ -249,10 +357,16 @@ export class QuotationsService {
       throw new ConflictException('Ya existe un trabajo archivado con ese nombre.');
     }
 
-    return this.prisma.activityCatalog.update({
+    if (duplicatedByCode && duplicatedByCode.id !== id && duplicatedByCode.deletedAt === null) {
+      throw new ConflictException('Ya existe otra actividad con esa clave.');
+    }
+
+    const updated = await this.prisma.activityCatalog.update({
       where: { id },
-      data: { name },
+      data: { name, code, unitPrice },
     });
+    await this.catalogService.syncActivityCatalogToConceptCategory();
+    return updated;
   }
 
   async deleteWorkItemCatalog(id: string) {
@@ -264,10 +378,12 @@ export class QuotationsService {
       throw new NotFoundException('El trabajo solicitado ya no existe.');
     }
 
-    return this.prisma.activityCatalog.update({
+    const deleted = await this.prisma.activityCatalog.update({
       where: { id },
       data: { deletedAt: new Date() },
     });
+    await this.catalogService.syncActivityCatalogToConceptCategory();
+    return deleted;
   }
 
   async createReusableTextBlock(dto: CreateReusableTextBlockDto) {
@@ -341,12 +457,13 @@ export class QuotationsService {
 
   async createQuotation(dto: CreateQuotationDto, actorUserId?: string) {
     try {
-      const client = await this.requireClient(dto.clientId);
+      const client = await this.resolveQuotationClient(dto);
       const pricing = await this.buildPricingPayload(dto);
       const {
         itemRows,
         specialConsiderationRows,
         subtotal,
+        finalChargeRate,
         tax,
         total,
         currency,
@@ -360,16 +477,6 @@ export class QuotationsService {
           ? this.normalizeCommercialSections(dto.commercialSections)
           : await this.resolveCommercialSectionsFromTemplate(dto);
       const commercialSectionsJson = this.toJsonSections(commercialSections);
-      const sequence = (await this.prisma.quotation.count()) + 1;
-      const year = new Date().getFullYear();
-      const folio = `COT.${String(sequence).padStart(4, '0')}-${year}`;
-      const pipeline = await this.pipelineService.ensureDefaultPipeline();
-      const initialStage = pipeline?.stages.find((stage) => stage.code === QuotationStatus.BORRADOR);
-
-      if (!pipeline || !initialStage) {
-        throw new BadRequestException('Pipeline comercial no disponible');
-      }
-
       const requestedOwner =
         dto.createdById
           ? await this.prisma.user.findFirst({
@@ -383,87 +490,94 @@ export class QuotationsService {
             })
           : null;
 
-      const quotation = await this.prisma.quotation.create({
-        data: {
-          folio,
-          clientId: client.id,
-          pipelineId: pipeline.id,
-          stageId: initialStage.id,
-          rootQuotationId: null,
-          previousVersionId: null,
-          serviceType: dto.serviceType?.trim() || null,
-          templateType: dto.templateType?.trim() || null,
-          coverTitle: dto.coverTitle?.trim() || dto.title,
-          executiveSummary: dto.executiveSummary?.trim() || null,
-          versionNumber: 1,
-          validUntil: this.resolveValidUntil(dto.validityDays),
-          pricingRule: dto.pricingRule?.trim() || null,
-          pricingRuleLabel,
-          discountPercent,
-          requiresApproval,
-          approvalStatus,
-          title: dto.title,
-          notes: dto.notes,
-          durationOfWork: dto.durationOfWork,
-          termsAndConditions: dto.termsAndConditions,
-          commercialSections: commercialSectionsJson,
-          currency,
-          createdById:
-            requestedOwner?.id ||
-            actorUserId ||
-            (await this.prisma.user.findFirst({
-              where: {
-                isActive: true,
-                role: {
-                  in: [UserRole.ADMIN, UserRole.SALES],
+      const ownerId =
+        requestedOwner?.id ||
+        actorUserId ||
+        (await this.prisma.user.findFirst({
+          where: {
+            isActive: true,
+            role: {
+              in: [UserRole.ADMIN, UserRole.SALES],
+            },
+          },
+          orderBy: [{ role: 'asc' }, { createdAt: 'asc' }],
+        }))?.id ||
+        (await this.ensureSystemUser());
+
+      const quotation = await this.createQuotationWithResolvedFolio((folio) =>
+        this.prisma.quotation.create({
+          data: {
+            folio,
+            clientId: client.id,
+            contactName: dto.contactName?.trim() || null,
+            pipelineId: null,
+            stageId: null,
+            rootQuotationId: null,
+            previousVersionId: null,
+            serviceType: dto.serviceType?.trim() || null,
+            templateType: dto.templateType?.trim() || null,
+            coverTitle: dto.coverTitle?.trim() || dto.title,
+            executiveSummary: dto.executiveSummary?.trim() || null,
+            versionNumber: 1,
+            validUntil: this.resolveValidUntil(dto.validityDays),
+            pricingRule: dto.pricingRule?.trim() || null,
+            pricingRuleLabel,
+            partCount: Math.max(0, dto.partCount ?? 0),
+            discountPercent,
+            requiresApproval,
+            approvalStatus,
+            title: dto.title,
+            notes: dto.notes,
+            durationOfWork: dto.durationOfWork,
+            termsAndConditions: dto.termsAndConditions,
+            commercialSections: commercialSectionsJson,
+            currency,
+            finalChargeRate,
+            createdById: ownerId,
+            subtotal,
+            tax,
+            total,
+            items: { create: itemRows },
+            specialConsiderations: { create: specialConsiderationRows },
+            history: {
+              create: {
+                eventType: 'QUOTATION_CREATED',
+                toStatus: QuotationStatus.BORRADOR,
+                payload: { items: itemRows.length, versionNumber: 1, requiresApproval },
+              },
+            },
+            activities: {
+              create: {
+                type: ActivityType.DEAL_CREATED,
+                description: `Cotización creada por ${currency} ${total.toFixed(2)}`,
+                payload: {
+                  total,
+                  currency,
+                  ownerId: requestedOwner?.id || null,
+                  pricingRuleLabel,
+                  validUntil: this.resolveValidUntil(dto.validityDays),
                 },
+                userId: actorUserId,
               },
-              orderBy: [{ role: 'asc' }, { createdAt: 'asc' }],
-            }))?.id ||
-            (await this.ensureSystemUser()),
-          subtotal,
-          tax,
-          total,
-          items: { create: itemRows },
-          specialConsiderations: { create: specialConsiderationRows },
-          history: {
-            create: {
-              eventType: 'QUOTATION_CREATED',
-              toStatus: QuotationStatus.BORRADOR,
-              payload: { items: itemRows.length, versionNumber: 1, requiresApproval },
             },
           },
-          activities: {
-            create: {
-              type: ActivityType.DEAL_CREATED,
-              description: `Cotización creada en ${initialStage.name} por ${currency} ${total.toFixed(2)}`,
-              payload: {
-                stage: initialStage.name,
-                total,
-                currency,
-                ownerId: requestedOwner?.id || null,
-                pricingRuleLabel,
-                validUntil: this.resolveValidUntil(dto.validityDays),
-              },
-              userId: actorUserId,
+          include: {
+            client: true,
+            items: true,
+            specialConsiderations: {
+              orderBy: [{ type: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
             },
+            stage: true,
+            activities: true,
+            createdBy: true,
           },
-        },
-        include: {
-          client: true,
-          items: true,
-          specialConsiderations: {
-            orderBy: [{ type: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
-          },
-          stage: true,
-          activities: true,
-          createdBy: true,
-        },
-      });
+        }),
+      );
 
       await this.syncSpecialConsiderationCatalog(specialConsiderationRows);
       await this.syncServiceTemplate(dto);
       await this.syncWorkItemCatalog(commercialSections);
+      await this.recordQuotationLearning(quotation);
 
       return quotation;
     } catch (error) {
@@ -480,9 +594,7 @@ export class QuotationsService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new BadRequestException(
-          'Ya existe un folio o un dato unico en conflicto. Reinicia la API y vuelve a intentar.',
-        );
+        throw new BadRequestException('Ya existe un dato único en conflicto para la cotización.');
       }
 
       if (error instanceof BadRequestException || error instanceof NotFoundException) {
@@ -508,12 +620,13 @@ export class QuotationsService {
       throw new NotFoundException('Cotización no encontrada');
     }
 
-    const client = await this.requireClient(dto.clientId);
+    const client = await this.resolveQuotationClient(dto);
     const pricing = await this.buildPricingPayload(dto);
     const {
       itemRows,
       specialConsiderationRows,
       subtotal,
+      finalChargeRate,
       tax,
       total,
       currency,
@@ -553,6 +666,7 @@ export class QuotationsService {
         where: { id },
         data: {
           clientId: client.id,
+          contactName: dto.contactName?.trim() || null,
           serviceType: dto.serviceType?.trim() || null,
           templateType: dto.templateType?.trim() || null,
           coverTitle: dto.coverTitle?.trim() || dto.title,
@@ -560,6 +674,7 @@ export class QuotationsService {
           validUntil: this.resolveValidUntil(dto.validityDays),
           pricingRule: dto.pricingRule?.trim() || null,
           pricingRuleLabel,
+          partCount: Math.max(0, dto.partCount ?? 0),
           discountPercent,
           requiresApproval,
           approvalStatus,
@@ -572,6 +687,7 @@ export class QuotationsService {
           termsAndConditions: dto.termsAndConditions,
           commercialSections: commercialSectionsJson,
           currency,
+          finalChargeRate,
           createdById: requestedOwner?.id || quotation.createdById,
           subtotal,
           tax,
@@ -622,6 +738,7 @@ export class QuotationsService {
     await this.syncSpecialConsiderationCatalog(specialConsiderationRows);
     await this.syncServiceTemplate(dto);
     await this.syncWorkItemCatalog(commercialSections);
+    await this.recordQuotationLearning(updated);
 
     return updated;
   }
@@ -645,7 +762,7 @@ export class QuotationsService {
 
     const nextStage = await this.pipelineService.getStageByStatus(status);
 
-    return this.prisma.quotation.update({
+    const updated = await this.prisma.quotation.update({
       where: { id },
       data: {
         status,
@@ -670,6 +787,16 @@ export class QuotationsService {
         },
       },
     });
+
+    if (status === QuotationStatus.ACEPTADA) {
+      const acceptanceReport = await this.generateAcceptanceWordReport(id, actorUserId);
+      return {
+        ...updated,
+        acceptanceReport,
+      };
+    }
+
+    return updated;
   }
 
   async updateQuotation(id: string, dto: UpdateQuotationDto, actorUserId?: string) {
@@ -688,15 +815,20 @@ export class QuotationsService {
       }
     }
 
-    return this.prisma.quotation.update({
+    const updated = await this.prisma.quotation.update({
       where: { id },
       data: {
         clientId: dto.clientId,
+        contactName:
+          dto.contactName === undefined
+            ? undefined
+            : dto.contactName.trim() || null,
         coverTitle: dto.coverTitle,
         executiveSummary: dto.executiveSummary,
         serviceType: dto.serviceType,
         templateType: dto.templateType,
         pricingRule: dto.pricingRule,
+        partCount: dto.partCount,
         validUntil:
           typeof dto.validityDays === 'number'
             ? this.resolveValidUntil(dto.validityDays)
@@ -715,11 +847,13 @@ export class QuotationsService {
             eventType: 'QUOTATION_UPDATED',
             payload: {
               clientId: dto.clientId,
+              contactName: dto.contactName,
               coverTitle: dto.coverTitle,
               executiveSummary: dto.executiveSummary,
               serviceType: dto.serviceType,
               templateType: dto.templateType,
               pricingRule: dto.pricingRule,
+              partCount: dto.partCount,
               title: dto.title,
               notes: dto.notes,
             },
@@ -728,6 +862,9 @@ export class QuotationsService {
       },
       include: { client: true, items: true, stage: true, activities: true },
     });
+
+    await this.recordQuotationLearning(updated);
+    return updated;
   }
 
   async updateCommercialTerms(id: string, dto: UpdateQuotationCommercialDto, actorUserId?: string) {
@@ -814,26 +951,31 @@ export class QuotationsService {
       ),
       client: {
         legalName: quotation.client.legalName,
-        rfc: quotation.client.rfc,
+        contactName: quotation.contactName || undefined,
+        rfc: quotation.client.rfc || undefined,
         address: quotation.client.address || undefined,
       },
       quotation: {
-        title: quotation.title,
+        title: quotation.coverTitle || quotation.title,
         sellerName: this.normalizeOwnerName(quotation.createdBy.name, quotation.createdBy.email),
         notes: quotation.notes || undefined,
         durationOfWork: quotation.durationOfWork || undefined,
         termsAndConditions: quotation.termsAndConditions || undefined,
+        executiveSummary: quotation.executiveSummary || undefined,
         commercialSections: Array.isArray(quotation.commercialSections)
           ? this.normalizeCommercialSections(
               quotation.commercialSections as Array<{ title: string; content: string }>,
             )
           : undefined,
         subtotal: quotation.subtotal.toString(),
+        finalChargeRate: quotation.finalChargeRate.toString(),
         tax: quotation.tax.toString(),
         total: quotation.total.toString(),
         currency: quotation.currency,
       },
       items: quotation.items.map((item) => ({
+        partNumber: item.partNumber,
+        partQuantity: item.partQuantity,
         serviceCode: item.supplyCode,
         serviceName: item.supplyName,
         quantity: item.quantity.toString(),
@@ -878,26 +1020,31 @@ export class QuotationsService {
       ),
       client: {
         legalName: quotation.client.legalName,
-        rfc: quotation.client.rfc,
+        contactName: quotation.contactName || undefined,
+        rfc: quotation.client.rfc || undefined,
         address: quotation.client.address || undefined,
       },
       quotation: {
-        title: quotation.title,
+        title: quotation.coverTitle || quotation.title,
         sellerName: this.normalizeOwnerName(quotation.createdBy.name, quotation.createdBy.email),
         notes: quotation.notes || undefined,
         durationOfWork: quotation.durationOfWork || undefined,
         termsAndConditions: quotation.termsAndConditions || undefined,
+        executiveSummary: quotation.executiveSummary || undefined,
         commercialSections: Array.isArray(quotation.commercialSections)
           ? this.normalizeCommercialSections(
               quotation.commercialSections as Array<{ title: string; content: string }>,
             )
           : undefined,
         subtotal: quotation.subtotal.toString(),
+        finalChargeRate: quotation.finalChargeRate.toString(),
         tax: quotation.tax.toString(),
         total: quotation.total.toString(),
         currency: quotation.currency,
       },
       items: quotation.items.map((item) => ({
+        partNumber: item.partNumber,
+        partQuantity: item.partQuantity,
         serviceCode: item.supplyCode,
         serviceName: item.supplyName,
         quantity: item.quantity.toString(),
@@ -922,6 +1069,14 @@ export class QuotationsService {
       fileName: `${quotation.folio}-simplificado.pdf`,
       file: Buffer.from(pdf).toString('base64'),
     };
+  }
+
+  async generateWordReport(id: string, actorUserId?: string) {
+    return this.reporteWordService.generarCotizacionWord(id, actorUserId);
+  }
+
+  async generateSuggestedWordReport(id: string, actorUserId?: string) {
+    return this.reporteWordService.generarReporteSugeridoWord(id, actorUserId);
   }
 
   listActivities(id: string) {
@@ -961,43 +1116,44 @@ export class QuotationsService {
       throw new NotFoundException('Cotización no encontrada');
     }
 
-    const sequence = (await this.prisma.quotation.count()) + 1;
-    const year = new Date().getFullYear();
-    const folio = `COT.${String(sequence).padStart(4, '0')}-${year}`;
     const pipeline = await this.pipelineService.ensureDefaultPipeline();
     const draftStage = pipeline?.stages.find((stage) => stage.code === QuotationStatus.BORRADOR);
     const rootId = quotation.rootQuotationId || quotation.id;
 
-    return this.prisma.quotation.create({
-      data: {
-        folio,
-        rootQuotationId: rootId,
-        previousVersionId: quotation.id,
-        clientId: quotation.clientId,
-        pipelineId: pipeline?.id,
-        stageId: draftStage?.id,
-        status: QuotationStatus.BORRADOR,
-        serviceType: quotation.serviceType,
-        templateType: quotation.templateType,
-        coverTitle: quotation.coverTitle,
-        executiveSummary: quotation.executiveSummary,
-        versionNumber: quotation.versionNumber + 1,
-        validUntil: quotation.validUntil,
-        pricingRule: quotation.pricingRule,
-        pricingRuleLabel: quotation.pricingRuleLabel,
-        discountPercent: quotation.discountPercent,
-        requiresApproval: quotation.requiresApproval,
-        approvalStatus: quotation.approvalStatus,
-        approvalReason: quotation.approvalReason,
+    return this.createQuotationWithResolvedFolio((folio) =>
+      this.prisma.quotation.create({
+        data: {
+          folio,
+          rootQuotationId: rootId,
+          previousVersionId: quotation.id,
+          clientId: quotation.clientId,
+          contactName: quotation.contactName,
+          pipelineId: pipeline?.id,
+          stageId: draftStage?.id,
+          status: QuotationStatus.BORRADOR,
+          serviceType: quotation.serviceType,
+          templateType: quotation.templateType,
+          coverTitle: quotation.coverTitle,
+          executiveSummary: quotation.executiveSummary,
+          versionNumber: quotation.versionNumber + 1,
+          validUntil: quotation.validUntil,
+          pricingRule: quotation.pricingRule,
+          pricingRuleLabel: quotation.pricingRuleLabel,
+          discountPercent: quotation.discountPercent,
+          requiresApproval: quotation.requiresApproval,
+          approvalStatus: quotation.approvalStatus,
+          approvalReason: quotation.approvalReason,
         title: `${quotation.title} v${quotation.versionNumber + 1}`,
         notes: quotation.notes,
         durationOfWork: quotation.durationOfWork,
         termsAndConditions: quotation.termsAndConditions,
         commercialSections: quotation.commercialSections as Prisma.InputJsonValue,
         subtotal: quotation.subtotal,
+        finalChargeRate: quotation.finalChargeRate,
         tax: quotation.tax,
         total: quotation.total,
         currency: quotation.currency,
+        partCount: quotation.partCount,
         createdById: actorUserId || quotation.createdById,
         items: {
           create: quotation.items.map((item) => ({
@@ -1007,6 +1163,9 @@ export class QuotationsService {
             supplyName: item.supplyName,
             categoryName: item.categoryName,
             pricingProfileName: item.pricingProfileName,
+            partNumber: item.partNumber,
+            partQuantity: item.partQuantity,
+            activityDays: item.activityDays,
             isOptional: item.isOptional,
             optionGroup: item.optionGroup,
             optionLabel: item.optionLabel,
@@ -1038,7 +1197,7 @@ export class QuotationsService {
           },
         },
       },
-    });
+    }));
   }
 
   async markQuotationInteraction(
@@ -1081,7 +1240,7 @@ export class QuotationsService {
     const interaction = interactionMap[action];
     const nextStage = await this.pipelineService.getStageByStatus(interaction.status);
 
-    return this.prisma.quotation.update({
+    const updated = await this.prisma.quotation.update({
       where: { id },
       data: {
         status: interaction.status,
@@ -1104,6 +1263,16 @@ export class QuotationsService {
         },
       },
     });
+
+    if (action === 'accepted') {
+      const acceptanceReport = await this.generateAcceptanceWordReport(id, actorUserId);
+      return {
+        ...updated,
+        acceptanceReport,
+      };
+    }
+
+    return updated;
   }
 
   async resolveQuotationApproval(
@@ -1196,13 +1365,47 @@ export class QuotationsService {
     return client;
   }
 
+  private async resolveQuotationClient(dto: Pick<CreateQuotationDto, 'clientId' | 'clientName'>) {
+    if (dto.clientId) {
+      return this.requireClient(dto.clientId);
+    }
+
+    const legalName = dto.clientName?.trim();
+    if (!legalName) {
+      throw new BadRequestException('El nombre de la compañía es obligatorio.');
+    }
+
+    const existing = await this.prisma.client.findFirst({
+      where: {
+        legalName: {
+          equals: legalName,
+          mode: 'insensitive',
+        },
+        deletedAt: null,
+      },
+    });
+
+    if (existing) {
+      return existing;
+    }
+
+    return this.prisma.client.create({
+      data: {
+        legalName,
+        commercialName: null,
+        rfc: null,
+        address: null,
+      },
+    });
+  }
+
   private async buildPricingPayload(dto: CreateQuotationDto) {
     const supplies = await this.prisma.supply.findMany({
-      where: { id: { in: dto.items.map((item) => item.serviceId) } },
+      where: { id: { in: dto.items.map((item) => item.serviceId).filter(Boolean) as string[] } },
       include: { category: true },
     });
     const pricingProfiles = await this.prisma.supplyPricingProfile.findMany({
-      where: { id: { in: dto.items.map((item) => item.pricingProfileId) } },
+      where: { id: { in: dto.items.map((item) => item.pricingProfileId).filter(Boolean) as string[] } },
     });
 
     const itemRows: Array<{
@@ -1212,6 +1415,9 @@ export class QuotationsService {
       supplyName: string;
       categoryName: string;
       pricingProfileName: string;
+      partNumber: number;
+      partQuantity: number;
+      activityDays: number;
       isOptional?: boolean;
       optionGroup?: string;
       optionLabel?: string;
@@ -1240,15 +1446,76 @@ export class QuotationsService {
     let catalogTotal = 0;
 
     for (const item of dto.items) {
-      const supply = supplies.find((current) => current.id === item.serviceId);
+      if (!item.serviceId || !item.pricingProfileId) {
+        const manualName = item.name?.trim();
+        const manualCode = item.code?.trim() || 'ACTIVIDAD';
+        const manualCategory = item.categoryName?.trim() || 'Actividades';
+        const manualProfileName = item.pricingProfileName?.trim() || 'Manual';
+
+        if (!manualName) {
+          throw new BadRequestException('Los conceptos manuales requieren al menos un nombre.');
+        }
+
+        const quantity = item.quantity;
+        const partNumber = Math.max(0, item.partNumber ?? 0);
+        const partQuantity = partNumber > 0 ? Math.max(1, item.partQuantity || 1) : 1;
+        const unitPrice = Number(item.unitPriceOverride || 0);
+        const activityDays = Math.max(1, item.activityDays || 1);
+        const totalPrice = Number((unitPrice * quantity * activityDays * partQuantity).toFixed(2));
+
+        subtotal += item.isOptional ? 0 : totalPrice;
+        itemRows.push({
+          supplyCode: manualCode,
+          supplyName: manualName,
+          categoryName: manualCategory,
+          pricingProfileName: manualProfileName,
+          partNumber,
+          partQuantity,
+          activityDays,
+          isOptional: item.isOptional,
+          optionGroup: item.optionGroup?.trim() || undefined,
+          optionLabel: item.optionLabel?.trim() || undefined,
+          quantity,
+          unitPrice,
+          totalPrice,
+          exchangeRateUsed: exchangeRate,
+          priceOriginCurrency: currency,
+        });
+        continue;
+      }
+
+      let supply = supplies.find((current) => current.id === item.serviceId);
+      let pricingProfile = pricingProfiles.find(
+        (current) =>
+          current.id === item.pricingProfileId && current.supplyId === item.serviceId,
+      );
+
       if (!supply) {
         throw new NotFoundException(`Servicio ${item.serviceId} no encontrado`);
       }
 
-      const pricingProfile = pricingProfiles.find(
-        (current) =>
-          current.id === item.pricingProfileId && current.supplyId === item.serviceId,
-      );
+      const requestedName = item.name?.trim();
+      const requestedCode = item.code?.trim().toUpperCase();
+      if (
+        supply.code.startsWith('ACT-') &&
+        (
+          (requestedName &&
+            requestedName.localeCompare(supply.name, 'es', { sensitivity: 'base' }) !== 0) ||
+          (requestedCode && requestedCode !== supply.code)
+        )
+      ) {
+        const ensuredActivity = await this.catalogService.ensureActivityConcept({
+          name: requestedName || supply.name,
+          code: requestedCode,
+          unitPrice:
+            typeof item.unitPriceOverride === 'number' && item.unitPriceOverride >= 0
+              ? item.unitPriceOverride
+              : undefined,
+        });
+        supply = ensuredActivity.supply;
+        pricingProfile = ensuredActivity.pricingProfile;
+      }
+
       if (!pricingProfile) {
         throw new NotFoundException(
           `Perfil de precio ${item.pricingProfileId} no encontrado para ${supply.code}`,
@@ -1256,50 +1523,61 @@ export class QuotationsService {
       }
 
       const quantity = item.quantity;
-      const mxnPrice = pricingProfile.mxnPrice ? Number(pricingProfile.mxnPrice) : 0;
-      const usdPrice = pricingProfile.usdPrice ? Number(pricingProfile.usdPrice) : 0;
+      const partNumber = Math.max(0, item.partNumber ?? 0);
+      const partQuantity = partNumber > 0 ? Math.max(1, item.partQuantity || 1) : 1;
+      const activityDays =
+        supply.code.startsWith('ACT-')
+          ? Math.max(1, item.activityDays || 1)
+          : 1;
+      const hasMxnPrice = pricingProfile.mxnPrice !== null;
+      const hasUsdPrice = pricingProfile.usdPrice !== null;
+      const mxnPrice = hasMxnPrice ? Number(pricingProfile.mxnPrice) : 0;
+      const usdPrice = hasUsdPrice ? Number(pricingProfile.usdPrice) : 0;
       let catalogUnitPrice = 0;
       let priceOriginCurrency = currency;
 
       if (currency === 'USD') {
-        if (usdPrice) {
+        if (hasUsdPrice) {
           catalogUnitPrice = usdPrice;
           priceOriginCurrency = 'USD';
-        } else if (mxnPrice && exchangeRate) {
+        } else if (hasMxnPrice && exchangeRate) {
           catalogUnitPrice = Number((mxnPrice / exchangeRate).toFixed(2));
           priceOriginCurrency = 'MXN';
         }
-      } else if (mxnPrice) {
+      } else if (hasMxnPrice) {
         catalogUnitPrice = mxnPrice;
         priceOriginCurrency = 'MXN';
-      } else if (usdPrice && exchangeRate) {
+      } else if (hasUsdPrice && exchangeRate) {
         catalogUnitPrice = Number((usdPrice * exchangeRate).toFixed(2));
         priceOriginCurrency = 'USD';
       }
 
-      if (!catalogUnitPrice) {
+      if (!hasMxnPrice && !hasUsdPrice) {
         throw new NotFoundException(
           `Suministro ${supply.code} sin precio configurado en ${currency}`,
         );
       }
 
       const unitPrice =
-        typeof item.unitPriceOverride === 'number' && item.unitPriceOverride > 0
+        typeof item.unitPriceOverride === 'number' && item.unitPriceOverride >= 0
           ? item.unitPriceOverride
           : Number((catalogUnitPrice * pricingRule.multiplier).toFixed(2));
 
-      const totalPrice = unitPrice * quantity;
-      const catalogTotalPrice = Number((catalogUnitPrice * quantity).toFixed(2));
+      const totalPrice = unitPrice * quantity * activityDays * partQuantity;
+      const catalogTotalPrice = Number((catalogUnitPrice * quantity * activityDays * partQuantity).toFixed(2));
       catalogTotal += catalogTotalPrice;
       subtotal += item.isOptional ? 0 : totalPrice;
 
       itemRows.push({
         supplyId: supply.id,
         pricingProfileId: pricingProfile.id,
-        supplyCode: supply.code,
-        supplyName: supply.name,
+        supplyCode: item.code?.trim() || supply.code,
+        supplyName: item.name?.trim() || supply.name,
         categoryName: supply.category.name,
         pricingProfileName: pricingProfile.name,
+        partNumber,
+        partQuantity,
+        activityDays,
         isOptional: item.isOptional,
         optionGroup: item.optionGroup?.trim() || undefined,
         optionLabel: item.optionLabel?.trim() || undefined,
@@ -1329,17 +1607,6 @@ export class QuotationsService {
             percentage,
             sortOrder: consideration.sortOrder ?? index,
           });
-          itemRows.push({
-            supplyCode: 'ADICIONAL',
-            supplyName: concept || `Adicional ${percentage}%`,
-            categoryName: 'Consideraciones especiales',
-            pricingProfileName: `${percentage}%`,
-            quantity: 1,
-            unitPrice: additionalAmount,
-            totalPrice: additionalAmount,
-            exchangeRateUsed: exchangeRate,
-            priceOriginCurrency: currency,
-          });
           continue;
         }
 
@@ -1368,17 +1635,6 @@ export class QuotationsService {
           usdAmount: usdAmount || undefined,
           sortOrder: consideration.sortOrder ?? index,
         });
-        itemRows.push({
-          supplyCode: 'ADICIONAL',
-          supplyName: concept || 'Consideración especial',
-          categoryName: 'Consideraciones especiales',
-          pricingProfileName: 'Monto fijo',
-          quantity,
-          unitPrice: appliedAmount,
-          totalPrice: appliedAmount,
-          exchangeRateUsed: exchangeRate,
-          priceOriginCurrency: currency,
-        });
         continue;
       }
 
@@ -1405,22 +1661,10 @@ export class QuotationsService {
         usdAmount: usdAmount || undefined,
         sortOrder: consideration.sortOrder ?? index,
       });
-      itemRows.push({
-        supplyCode: 'VIATICOS',
-        supplyName: consideration.location?.trim()
-          ? consideration.location.trim()
-          : 'Sin descripción',
-        categoryName: 'Viáticos',
-        pricingProfileName: 'Monto fijo',
-        quantity: 1,
-        unitPrice: appliedAmount,
-        totalPrice: appliedAmount,
-        exchangeRateUsed: exchangeRate,
-        priceOriginCurrency: currency,
-      });
     }
 
-    const tax = Number((subtotal * 0.16).toFixed(2));
+    const finalChargeRate = Number((dto.finalChargeRate ?? 16).toFixed(4));
+    const tax = Number((subtotal * (finalChargeRate / 100)).toFixed(2));
     const total = Number((subtotal + tax).toFixed(2));
     const discountPercent = catalogTotal
       ? Number((((catalogTotal - subtotal) / catalogTotal) * 100).toFixed(2))
@@ -1431,6 +1675,7 @@ export class QuotationsService {
       itemRows,
       specialConsiderationRows,
       subtotal,
+      finalChargeRate,
       tax,
       total,
       currency,
@@ -1452,7 +1697,7 @@ export class QuotationsService {
       ? this.normalizeCommercialSections(
           template.sections as Array<{ title: string; content: string }>,
         )
-      : this.defaultCommercialSections();
+      : await this.defaultCommercialSections();
 
     if (!storedSections.length) {
       return this.defaultCommercialSections();
@@ -1493,7 +1738,11 @@ export class QuotationsService {
     ];
   }
 
-  private defaultCommercialSections() {
+  private async defaultCommercialSections() {
+    const company = await this.companyProfileService.getProfile().catch(() => null);
+    const issuerName = company?.legalName || 'SISTEMAS ELECTRICOS ZARAGOZA S. A DE C. V. (SIEZA)';
+    const shortName = company?.brandShortName || company?.commercialName || 'SIEZA';
+
     return [
       {
         title: 'Trabajos a realizar:',
@@ -1502,12 +1751,14 @@ export class QuotationsService {
       {
         title: 'Duracion de los trabajos:',
         content:
-          'Una vez autorizado este presupuesto y colocada la orden por escrito a SISTEMAS ELECTRICOS ZARAGOZA S. A DE C. V. (SIEZA), el tiempo de realización es de:\nEl tiempo estimado es de 6 días en sitio, dependiendo de las facilidades de las instalaciones',
+          company?.defaultDurationOfWork?.trim() ||
+          `Una vez autorizado este presupuesto y colocada la orden por escrito a ${issuerName}, el tiempo de realización es de:\nEl tiempo estimado es de 6 días en sitio, dependiendo de las facilidades de las instalaciones`,
       },
       {
         title: 'Notas importantes:',
         content:
-          '-La presente representa nuestra interpretación a sus requerimientos sobre la base de la información que nos proporcionaron y el alcance de suministro se limita a lo descrito en la\npresente oferta, cualquier desviación o equipo adicional, requerirá de una negociación del precio y tiempo de entrega cotizados.\n-No se contempla la reparación ni el refaccionamiento de ningún tipo, de ser necesario será cotizado por separado.\n-Se requiere de una orden de compra y el anticipo correspondiente previo al inicio de los trabajos.\n-Se consideran los viáticos del personal para este servicio, incluyendo la entrega de reportes de campo.\n-Nuestros equipos de pruebas cuentan con Protocolo de pruebas de laboratorio certificado, se entrega copia conjuntamente con los reportes.\n-Confirmar con al menos 5 días de anticipación\n-Todo atraso no imputable a SIEZA se cobrará a razón de $15,000.00 pesos por día. Por el grupo de personal considerado (1 Ingeniero y 1 Técnico)\n-Se entregará copia de los reportes de campo al concluir el servicio, y una semana después, se enviará la carpeta con todos los reportes, incluyendo el fotográfico.',
+          company?.defaultTerms?.trim() ||
+          `-La presente representa nuestra interpretación a sus requerimientos sobre la base de la información que nos proporcionaron y el alcance de suministro se limita a lo descrito en la\npresente oferta, cualquier desviación o equipo adicional, requerirá de una negociación del precio y tiempo de entrega cotizados.\n-No se contempla la reparación ni el refaccionamiento de ningún tipo, de ser necesario será cotizado por separado.\n-Se requiere de una orden de compra y el anticipo correspondiente previo al inicio de los trabajos.\n-Se consideran los viáticos del personal para este servicio, incluyendo la entrega de reportes de campo.\n-Nuestros equipos de pruebas cuentan con Protocolo de pruebas de laboratorio certificado, se entrega copia conjuntamente con los reportes.\n-Confirmar con al menos 5 días de anticipación\n-Todo atraso no imputable a ${shortName} se cobrará a razón de $15,000.00 pesos por día. Por el grupo de personal considerado (1 Ingeniero y 1 Técnico)\n-Se entregará copia de los reportes de campo al concluir el servicio, y una semana después, se enviará la carpeta con todos los reportes, incluyendo el fotográfico.`,
       },
       {
         title: 'Precios y validez:',
@@ -1520,10 +1771,313 @@ export class QuotationsService {
     ];
   }
 
+  private async recordQuotationLearning(quotation: QuotationWithRelations) {
+    try {
+      const inputText = this.buildLearningInputText(quotation);
+      if (!inputText) {
+        await this.appendQuotationLearningLog(
+          quotation,
+          {
+            inputText: '',
+            category: quotation.serviceType || null,
+            service: quotation.title,
+            variables: this.buildLearningVariables(quotation, 0),
+            suggestedServices: [],
+            suggestedWorkItems: [],
+            confidence: 0,
+          },
+          null,
+          'skipped_empty_input',
+        );
+        return;
+      }
+
+      const suggestedServices = this.extractSuggestedServicesFromItems(quotation.items || []);
+      if (!suggestedServices.length) {
+        await this.appendQuotationLearningLog(
+          quotation,
+          {
+            inputText,
+            category: quotation.serviceType || null,
+            service: quotation.title,
+            variables: this.buildLearningVariables(quotation, 0),
+            suggestedServices: [],
+            suggestedWorkItems: [],
+            confidence: 0.95,
+          },
+          null,
+          'skipped_empty_services',
+        );
+        return;
+      }
+
+      const suggestedWorkItems = this.extractWorkItemsFromSections(quotation.commercialSections);
+      const learningPayload = {
+        inputText,
+        category: quotation.serviceType || null,
+        service: quotation.title,
+        variables: this.buildLearningVariables(quotation, suggestedWorkItems.length),
+        suggestedServices,
+        suggestedWorkItems,
+        confidence: 0.95,
+      } as const;
+
+      const learningResult = await this.aiLearningService.learnFromSuggestion(learningPayload);
+      await this.appendQuotationLearningLog(quotation, learningPayload, learningResult, 'learned');
+    } catch (error) {
+      console.error('recordQuotationLearning failed:', error);
+    }
+  }
+
+  private buildLearningInputText(quotation: QuotationWithRelations) {
+    const segments = [
+      quotation.coverTitle,
+      quotation.title,
+      quotation.serviceType,
+      quotation.executiveSummary,
+      typeof quotation.client?.legalName === 'string' ? quotation.client?.legalName : undefined,
+    ];
+
+    return segments.filter(Boolean).join(' · ').trim();
+  }
+
+  private buildLearningVariables(quotation: QuotationWithRelations, workItemsCount: number) {
+    return {
+      cliente: quotation.client?.legalName || 'Cliente',
+      servicio: quotation.serviceType || quotation.title,
+      items: (quotation.items || []).length,
+      workItems: workItemsCount,
+      subtotal: Number(quotation.subtotal),
+      total: Number(quotation.total),
+      currency: quotation.currency,
+    };
+  }
+
+  private extractSuggestedServicesFromItems(items: QuotationItem[]) {
+    return Array.from(
+      new Set(
+        items
+          .filter((item) => !this.isDerivedSpecialConsiderationCode(item.supplyCode))
+          .map((item) => item.supplyName?.trim())
+          .filter((name): name is string => Boolean(name)),
+      ),
+    );
+  }
+
+  private isDerivedSpecialConsiderationCode(code?: string | null) {
+    return ['ADICIONAL', 'VIATICOS'].includes(String(code || '').trim().toUpperCase());
+  }
+
+  private async appendQuotationLearningLog(
+    quotation: QuotationWithRelations,
+    input: {
+      inputText: string;
+      category: string | null;
+      service: string | null;
+      variables: Record<string, string | number>;
+      suggestedServices: string[];
+      suggestedWorkItems: string[];
+      confidence: number;
+    },
+    output: {
+      id?: string;
+      mode?: string;
+      normalizedInput?: string;
+      detectedCategory?: string | null;
+      detectedService?: string | null;
+      suggestedServices?: unknown;
+      suggestedWorkItems?: unknown;
+      variables?: unknown;
+      confidence?: number;
+      createdAt?: Date;
+      updatedAt?: Date;
+    } | null,
+    status: 'learned' | 'skipped_empty_input' | 'skipped_empty_services',
+  ) {
+    try {
+      const filePath = resolve(process.cwd(), 'apps/api/storage/ai-learning/quotation-learning-log.jsonl');
+      await mkdir(dirname(filePath), { recursive: true });
+
+      const entry = {
+        loggedAt: new Date().toISOString(),
+        source: 'quotation',
+        status,
+        quotation: {
+          id: quotation.id,
+          folio: quotation.folio,
+          title: quotation.title,
+          serviceType: quotation.serviceType || null,
+          client: quotation.client?.legalName || null,
+          currency: quotation.currency,
+          subtotal: Number(quotation.subtotal),
+          total: Number(quotation.total),
+        },
+        input,
+        output:
+          output
+            ? {
+                id: output.id || null,
+                mode: output.mode || null,
+                normalizedInput: output.normalizedInput || null,
+                detectedCategory: output.detectedCategory || null,
+                detectedService: output.detectedService || null,
+                variables: output.variables ?? null,
+                suggestedServices: output.suggestedServices ?? null,
+                suggestedWorkItems: output.suggestedWorkItems ?? null,
+                confidence: typeof output.confidence === 'number' ? output.confidence : null,
+                createdAt: output.createdAt?.toISOString() || null,
+                updatedAt: output.updatedAt?.toISOString() || null,
+              }
+            : null,
+      };
+
+      await appendFile(filePath, `${JSON.stringify(entry)}\n`, 'utf8');
+    } catch (error) {
+      console.error('appendQuotationLearningLog failed:', error);
+    }
+  }
+
+  private extractWorkItemsFromSections(value: Prisma.JsonValue | null) {
+    const sections = this.parseCommercialSections(value).filter(
+      (section) => !section.title.trim().startsWith('__'),
+    );
+    const lines = sections.flatMap((section) => [
+      ...this.splitSectionLines(section.title),
+      ...this.splitSectionLines(section.content),
+    ]);
+
+    return Array.from(new Set(lines));
+  }
+
+  private parseCommercialSections(
+    value: Prisma.JsonValue | null,
+  ): Array<{ title: string; content: string }> {
+    if (!value) {
+      return [];
+    }
+
+    let parsed: unknown = value;
+
+    if (typeof value === 'string') {
+      try {
+        parsed = JSON.parse(value);
+      } catch {
+        return [];
+      }
+    }
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .map((section) => {
+        if (!section || typeof section !== 'object') {
+          return null;
+        }
+
+        return {
+          title: typeof (section as Record<string, unknown>).title === 'string'
+            ? (section as Record<string, unknown>).title
+            : '',
+          content: typeof (section as Record<string, unknown>).content === 'string'
+            ? (section as Record<string, unknown>).content
+            : '',
+        };
+      })
+      .filter(
+        (section): section is { title: string; content: string } =>
+          Boolean(section && (section.title || section.content)),
+      );
+  }
+
+  private splitSectionLines(value: string | null | undefined) {
+    if (!value) {
+      return [];
+    }
+
+    return value
+      .replace(/•/g, '\n')
+      .replace(/·/g, '\n')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+
+  async learnQuotation(id: string) {
+    const quotation = await this.prisma.quotation.findUnique({
+      where: { id },
+      include: {
+        client: true,
+        items: true,
+      },
+    });
+
+    if (!quotation) {
+      throw new NotFoundException('Cotización no encontrada');
+    }
+
+    await this.recordQuotationLearning({
+      ...quotation,
+      client: quotation.client,
+      items: quotation.items,
+    });
+
+    return { learned: true };
+  }
+
+  async rebuildLearningFromQuotations() {
+    await this.prisma.learnedRule.deleteMany({});
+    const quotations = await this.prisma.quotation.findMany({
+      where: { deletedAt: null },
+      include: {
+        client: true,
+        items: true,
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    for (const quotation of quotations) {
+      await this.recordQuotationLearning({
+        ...quotation,
+        client: quotation.client,
+        items: quotation.items,
+      });
+    }
+
+    return { learned: quotations.length };
+  }
+
+  private async generateAcceptanceWordReport(id: string, actorUserId?: string) {
+    try {
+      return await this.reporteWordService.generarReporteSugeridoWord(id, actorUserId);
+    } catch (error) {
+      await this.prisma.activity.create({
+        data: {
+          quotationId: id,
+          type: ActivityType.EDIT,
+          description: 'No fue posible generar el reporte Word automático al aceptar la cotización',
+          userId: actorUserId,
+          payload: {
+            error: error instanceof Error ? error.message : 'unknown_error',
+          },
+        },
+      });
+
+      return null;
+    }
+  }
+
   private normalizeCommercialSections(
     sections: Array<{ title: string; content: string }>,
   ) {
-    const defaults = this.defaultCommercialSections();
+    const defaults = [
+      { title: 'Trabajos a realizar:', content: '' },
+      { title: 'Duracion de los trabajos:', content: '' },
+      { title: 'Notas importantes:', content: '' },
+      { title: 'Precios y validez:', content: 'Los precios tienen una validez de 30 días.' },
+      { title: 'CONDICIONES DE PAGO:', content: '100 % a 90 días después de concluir el servicio.' },
+    ];
     const byTitle = new Map(
       sections.map((section) => [this.normalizeSectionTitle(section.title), section] as const),
     );
@@ -1621,14 +2175,16 @@ export class QuotationsService {
       return;
     }
 
+    const normalizedCommercialSections = dto.commercialSections?.length
+      ? this.toJsonSections(this.normalizeCommercialSections(dto.commercialSections))
+      : undefined;
+
     await this.prisma.serviceCatalog.upsert({
       where: { name: normalizedName },
       update: {
         templateType: dto.templateType?.trim() || null,
         items: dto.items as unknown as Prisma.InputJsonValue,
-        commercialSections: dto.commercialSections
-          ? (dto.commercialSections as unknown as Prisma.InputJsonValue)
-          : undefined,
+        commercialSections: normalizedCommercialSections,
         specialConsiderations: dto.specialConsiderations
           ? (dto.specialConsiderations as unknown as Prisma.InputJsonValue)
           : undefined,
@@ -1638,8 +2194,8 @@ export class QuotationsService {
         name: normalizedName,
         templateType: dto.templateType?.trim() || null,
         items: dto.items as unknown as Prisma.InputJsonValue,
-        commercialSections: dto.commercialSections
-          ? (dto.commercialSections as unknown as Prisma.InputJsonValue)
+        commercialSections: normalizedCommercialSections
+          ? normalizedCommercialSections
           : Prisma.JsonNull,
         specialConsiderations: dto.specialConsiderations
           ? (dto.specialConsiderations as unknown as Prisma.InputJsonValue)

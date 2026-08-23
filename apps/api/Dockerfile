@@ -1,11 +1,13 @@
-FROM node:22-alpine
+FROM node:22-bullseye
 
 WORKDIR /app
 COPY package.json ./
-RUN npm install
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends openssl ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    npm install
 COPY . .
 RUN npx prisma generate && npm run build
 
-EXPOSE 3001
+EXPOSE 5001
 CMD ["npm", "run", "start"]
-

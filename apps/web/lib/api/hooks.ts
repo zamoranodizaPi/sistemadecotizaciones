@@ -4,17 +4,29 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiDelete, apiDeleteWithBody, apiGet, apiPatch, apiPost } from './client';
 import type {
   ActivityResponse,
+  ActivityImportConfirmResponse,
+  ActivityImportPreviewResponse,
   AiCreateDealResponse,
   AiFeedbackResponse,
+  AiProyectoConvertResponse,
+  AiLearningPromptResponse,
+  AiLearningTrainingResponse,
+  AiProyectoResponse,
   AiSuggestedQuoteResponse,
   AssignableUserResponse,
   AuthUser,
   CatalogResponse,
+  ClientImportConfirmResponse,
+  ClientImportPreviewResponse,
+  CompanyProfileResponse,
   ClientResponse,
   DashboardMetricsResponse,
   DetectedCatalogServiceResponse,
   ExchangeRateResponse,
+  ExportActivitiesResponse,
   ExportCatalogResponse,
+  ExportClientsResponse,
+  ExportCombinedTemplateResponse,
   ImportConfirmResponse,
   ImportPreviewResponse,
   KanbanResponse,
@@ -27,6 +39,7 @@ import type {
   SpecialConsiderationCatalogResponse,
   QuotationTemplateResponse,
   QuotationStatus,
+  QuotationLearningResponse,
   WorkItemCatalogEntry,
   WorkItemCatalogResponse,
 } from './types';
@@ -89,7 +102,7 @@ export function useDashboardMetrics() {
 
 export function useAiSuggestQuote() {
   return useMutation({
-    mutationFn: (payload: { text: string }) =>
+    mutationFn: (payload: { text: string; mode?: 'CATALOG_MATCH' | 'STRUCTURED_JSON' }) =>
       apiPost<AiSuggestedQuoteResponse>('/ai/suggest-quote', payload),
   });
 }
@@ -100,10 +113,12 @@ export function useAiCreateDeal() {
   return useMutation({
     mutationFn: (payload: {
       text: string;
+      mode?: 'CATALOG_MATCH' | 'STRUCTURED_JSON';
       clientId: string;
       title?: string;
-      items?: Array<{ serviceId: string; pricingProfileId: string; quantity: number }>;
+      items?: Array<{ serviceId: string; pricingProfileId: string; quantity: number; unitPriceOverride?: number }>;
       workItems?: string[];
+      commercialText?: string;
     }) =>
       apiPost<AiCreateDealResponse>('/ai/create-deal', payload),
     onSuccess: () => {
@@ -119,9 +134,192 @@ export function useAiFeedback() {
   return useMutation({
     mutationFn: (payload: {
       input: string;
+      mode?: 'CATALOG_MATCH' | 'STRUCTURED_JSON';
       original: Record<string, unknown>;
       corrected: Record<string, unknown>;
     }) => apiPost<AiFeedbackResponse>('/ai/feedback', payload),
+  });
+}
+
+export function useAiLearningPrompts() {
+  return useQuery({
+    queryKey: ['ai-learning-prompts'],
+    queryFn: () => apiGet<AiLearningPromptResponse>('/ai-learning/prompts'),
+  });
+}
+
+export function useAiLearningTraining() {
+  return useQuery({
+    queryKey: ['ai-learning-training'],
+    queryFn: () => apiGet<AiLearningTrainingResponse>('/ai-learning/training'),
+  });
+}
+
+export function useSubmitAiLearningTraining() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: {
+      input: Record<string, unknown>;
+      output: Record<string, unknown>;
+      aceptado?: boolean;
+    }) => apiPost('/ai-learning/training-free', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ai-learning-prompts'] });
+      queryClient.invalidateQueries({ queryKey: ['ai-learning-training'] });
+    },
+  });
+}
+
+export function useSubmitAiLearningDataset() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: {
+      trainingDataset: Array<{
+        input: Record<string, unknown>;
+        output: Record<string, unknown>;
+        aceptado?: boolean;
+      }>;
+    }) => apiPost('/ai-learning/training-dataset', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ai-learning-training'] });
+      queryClient.invalidateQueries({ queryKey: ['ai-learning-prompts'] });
+    },
+  });
+}
+
+export function useDeleteAiLearningTraining() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/ai-learning/training/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ai-learning-training'] });
+    },
+  });
+}
+
+export function usePromoteAiLearningTraining() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: {
+      input: Record<string, unknown>;
+      output: Record<string, unknown>;
+      mode?: 'CATALOG_MATCH' | 'STRUCTURED_JSON';
+    }) => apiPost('/ai-learning/training-promote', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ai-learning-training'] });
+    },
+  });
+}
+
+export function useAiProyecto() {
+  return useMutation({
+    mutationFn: (payload: {
+      descripcion: string;
+      sector: string;
+      cliente?: string;
+      nombre?: string;
+      nivelComplejidad?: string;
+      condiciones?: {
+        complejidad?: 'bajo' | 'medio' | 'alto';
+        zona?: 'urbano' | 'industrial' | 'remoto';
+        urgencia?: 'normal' | 'urgente';
+        margen?: number;
+      };
+    }) => apiPost<AiProyectoResponse>('/ai/proyecto', payload),
+  });
+}
+
+export function useSaveAiProyectoTraining() {
+  return useMutation({
+    mutationFn: (payload: {
+      input: Record<string, unknown>;
+      output: Record<string, unknown>;
+      aceptado?: boolean;
+    }) => apiPost('/ai/proyecto/training', payload),
+  });
+}
+
+export function useConvertAiProyectoToQuotation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: {
+      proyectoId: string;
+      clientId: string;
+      title?: string;
+      currency?: 'MXN' | 'USD';
+    }) =>
+      apiPost<AiProyectoConvertResponse>(`/ai/proyecto/${payload.proyectoId}/convert-to-quotation`, {
+        clientId: payload.clientId,
+        title: payload.title,
+        currency: payload.currency,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotations'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-metrics'] });
+      queryClient.invalidateQueries({ queryKey: ['kanban'] });
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+    },
+  });
+}
+
+export function useGenerateAiProyectoPdf() {
+  return useMutation({
+    mutationFn: (proyectoId: string) => apiPost<PdfResponse>(`/ai/proyecto/${proyectoId}/pdf`),
+  });
+}
+
+export function useCreateAiLearningPrompt() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: {
+      mode?: 'CATALOG_MATCH' | 'STRUCTURED_JSON';
+      name: string;
+      systemPrompt: string;
+      inputExample?: string;
+      outputExample?: string;
+      isActive?: boolean;
+      sortOrder?: number;
+    }) => apiPost('/ai-learning/prompts', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ai-learning-prompts'] });
+    },
+  });
+}
+
+export function useUpdateAiLearningPrompt() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: {
+      id: string;
+      mode?: 'CATALOG_MATCH' | 'STRUCTURED_JSON';
+      name?: string;
+      systemPrompt?: string;
+      inputExample?: string;
+      outputExample?: string;
+      isActive?: boolean;
+      sortOrder?: number;
+    }) => apiPatch(`/ai-learning/prompts/${payload.id}`, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ai-learning-prompts'] });
+    },
+  });
+}
+
+export function useDeleteAiLearningPrompt() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/ai-learning/prompts/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['ai-learning-prompts'] });
+    },
   });
 }
 
@@ -298,6 +496,40 @@ export function useExchangeRate() {
   return useQuery({
     queryKey: ['exchange-rate'],
     queryFn: () => apiGet<ExchangeRateResponse>('/catalog/exchange-rate'),
+  });
+}
+
+export function useCompanyProfile() {
+  return useQuery({
+    queryKey: ['company-profile'],
+    queryFn: () => apiGet<CompanyProfileResponse>('/company-profile'),
+  });
+}
+
+export function useUpdateCompanyProfile() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: {
+      legalName: string;
+      commercialName?: string;
+      brandShortName?: string;
+      tagline?: string;
+      logoUrl?: string;
+      rfc?: string;
+      email?: string;
+      phone?: string;
+      website?: string;
+      address?: string;
+      city?: string;
+      state?: string;
+      country?: string;
+      defaultDurationOfWork?: string;
+      defaultTerms?: string;
+    }) => apiPatch<CompanyProfileResponse>('/company-profile', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['company-profile'] });
+    },
   });
 }
 
@@ -483,6 +715,29 @@ export function useQuotations() {
   });
 }
 
+export function useLearnQuotation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => apiPost<QuotationLearningResponse>(`/quotations/${id}/learn`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotations'] });
+    },
+  });
+}
+
+export function useRebuildLearning() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => apiPost<{ learned: number }>('/quotations/learn-all'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotations'] });
+      queryClient.invalidateQueries({ queryKey: ['ai-learning-training'] });
+    },
+  });
+}
+
 export function useKanban() {
   return useQuery({
     queryKey: ['kanban'],
@@ -502,7 +757,9 @@ export function useCreateQuotation() {
 
   return useMutation({
     mutationFn: (payload: {
-      clientId: string;
+      clientId?: string;
+      clientName?: string;
+      contactName?: string;
       createdById?: string;
       title: string;
       coverTitle?: string;
@@ -510,6 +767,8 @@ export function useCreateQuotation() {
       serviceType?: string;
       templateType?: string;
       pricingRule?: string;
+      partCount?: number;
+      finalChargeRate?: number;
       validityDays?: number;
       reusableBlockIds?: string[];
       notes?: string;
@@ -531,8 +790,15 @@ export function useCreateQuotation() {
       currency?: string;
       exchangeRate?: number;
       items: Array<{
-        serviceId: string;
-        pricingProfileId: string;
+        serviceId?: string;
+        pricingProfileId?: string;
+        code?: string;
+        name?: string;
+        categoryName?: string;
+        pricingProfileName?: string;
+        partNumber?: number;
+        partQuantity?: number;
+        activityDays?: number;
         quantity: number;
         unitPriceOverride?: number;
         isOptional?: boolean;
@@ -688,9 +954,10 @@ export function useCreateWorkItemCatalog() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (payload: { name: string }) =>
+    mutationFn: (payload: { name: string; code?: string; unitPrice?: number }) =>
       apiPost<WorkItemCatalogEntry>('/quotations/work-items/catalog', payload),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['catalog'] });
       queryClient.invalidateQueries({ queryKey: ['work-item-catalog'] });
     },
   });
@@ -752,6 +1019,7 @@ export function useUpdateQuotation() {
     mutationFn: ({
       id,
       clientId,
+      contactName,
       title,
       notes,
       coverTitle,
@@ -759,10 +1027,13 @@ export function useUpdateQuotation() {
       serviceType,
       templateType,
       pricingRule,
+      partCount,
+      finalChargeRate,
       validityDays,
     }: {
       id: string;
       clientId?: string;
+      contactName?: string;
       title?: string;
       notes?: string;
       coverTitle?: string;
@@ -770,10 +1041,13 @@ export function useUpdateQuotation() {
       serviceType?: string;
       templateType?: string;
       pricingRule?: string;
+      partCount?: number;
+      finalChargeRate?: number;
       validityDays?: number;
     }) =>
       apiPatch(`/quotations/${id}`, {
         clientId,
+        contactName,
         title,
         notes,
         coverTitle,
@@ -781,6 +1055,8 @@ export function useUpdateQuotation() {
         serviceType,
         templateType,
         pricingRule,
+        partCount,
+        finalChargeRate,
         validityDays,
       }),
     onSuccess: () => {
@@ -802,7 +1078,9 @@ export function useUpdateQuotationFromBuilder() {
     }: {
       id: string;
       payload: {
-        clientId: string;
+        clientId?: string;
+        clientName?: string;
+        contactName?: string;
         createdById?: string;
         title: string;
         coverTitle?: string;
@@ -810,6 +1088,8 @@ export function useUpdateQuotationFromBuilder() {
         serviceType?: string;
         templateType?: string;
         pricingRule?: string;
+        partCount?: number;
+        finalChargeRate?: number;
         validityDays?: number;
         reusableBlockIds?: string[];
         notes?: string;
@@ -831,8 +1111,15 @@ export function useUpdateQuotationFromBuilder() {
         currency?: string;
         exchangeRate?: number;
         items: Array<{
-          serviceId: string;
-          pricingProfileId: string;
+          serviceId?: string;
+          pricingProfileId?: string;
+          code?: string;
+          name?: string;
+          categoryName?: string;
+          pricingProfileName?: string;
+          partNumber?: number;
+          partQuantity?: number;
+          activityDays?: number;
           quantity: number;
           unitPriceOverride?: number;
           isOptional?: boolean;
@@ -862,6 +1149,18 @@ export function useGeneratePdf() {
 export function useGenerateSimplePdf() {
   return useMutation({
     mutationFn: (id: string) => apiPost<PdfResponse>(`/quotations/${id}/pdf/simple`),
+  });
+}
+
+export function useGenerateWordReport() {
+  return useMutation({
+    mutationFn: (id: string) => apiPost<PdfResponse>(`/quotations/${id}/report-word`),
+  });
+}
+
+export function useGenerateSuggestedWordReport() {
+  return useMutation({
+    mutationFn: (id: string) => apiPost<PdfResponse>(`/quotations/${id}/report-word/suggested`),
   });
 }
 
@@ -1043,5 +1342,94 @@ export function useConfirmImportExcel() {
 export function useExportCatalogExcel() {
   return useMutation({
     mutationFn: () => apiGet<ExportCatalogResponse>('/imports/excel/export'),
+  });
+}
+
+export function useExportClientTemplate() {
+  return useMutation({
+    mutationFn: () => apiGet<ExportCatalogResponse>('/imports/clients/export'),
+  });
+}
+
+export function useExportActivityTemplate() {
+  return useMutation({
+    mutationFn: () => apiGet<ExportCatalogResponse>('/imports/activities/export'),
+  });
+}
+
+export function useExportClientsData() {
+  return useMutation({
+    mutationFn: (filters?: { sector?: string; city?: string }) => {
+      const params = new URLSearchParams();
+      if (filters?.sector) {
+        params.set('sector', filters.sector);
+      }
+      if (filters?.city) {
+        params.set('city', filters.city);
+      }
+      const query = params.toString() ? `?${params.toString()}` : '';
+      return apiGet<ExportClientsResponse>(`/imports/clients/export/data${query}`);
+    },
+  });
+}
+
+export function useExportActivitiesData() {
+  return useMutation({
+    mutationFn: (filters?: { query?: string }) => {
+      const params = new URLSearchParams();
+      if (filters?.query) {
+        params.set('q', filters.query);
+      }
+      const query = params.toString() ? `?${params.toString()}` : '';
+      return apiGet<ExportActivitiesResponse>(`/imports/activities/export/data${query}`);
+    },
+  });
+}
+
+export function useExportCombinedTemplate() {
+  return useMutation({
+    mutationFn: () => apiGet<ExportCombinedTemplateResponse>('/imports/template/combinada'),
+  });
+}
+
+export function usePreviewClientImport() {
+  return useMutation({
+    mutationFn: (payload: { file: string; source?: string; sheetName?: string }) =>
+      apiPost<ClientImportPreviewResponse>('/imports/clients/preview', payload),
+  });
+}
+
+export function useConfirmClientImport() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: {
+      source?: string;
+      rows: ClientImportPreviewResponse['rows'];
+    }) => apiPost<ClientImportConfirmResponse>('/imports/clients/confirm', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['clients'] });
+    },
+  });
+}
+
+export function usePreviewActivityImport() {
+  return useMutation({
+    mutationFn: (payload: { file: string; source?: string; sheetName?: string }) =>
+      apiPost<ActivityImportPreviewResponse>('/imports/activities/preview', payload),
+  });
+}
+
+export function useConfirmActivityImport() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: {
+      source?: string;
+      rows: ActivityImportPreviewResponse['rows'];
+    }) => apiPost<ActivityImportConfirmResponse>('/imports/activities/confirm', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['work-item-catalog'] });
+    },
   });
 }

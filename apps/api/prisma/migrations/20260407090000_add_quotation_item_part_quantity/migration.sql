@@ -1,0 +1,2 @@
+ALTER TABLE "QuotationItem"
+ADD COLUMN "partQuantity" INTEGER NOT NULL DEFAULT 1;

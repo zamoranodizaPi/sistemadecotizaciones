@@ -26,6 +26,7 @@ export class AiService {
     context?: {
       catalog?: string;
       history?: string;
+      learningPrompts?: string;
     },
   ): Promise<ParsedIntent> {
     const heuristic = this.parseWithRules(text, 'fallback_no_key');
@@ -49,12 +50,31 @@ export class AiService {
     return heuristic;
   }
 
+  async generateStructuredProposal(
+    text: string,
+    context?: {
+      learningPrompts?: string;
+    },
+  ) {
+    const apiKey = this.configService.get<string>('OPENAI_API_KEY');
+    if (apiKey) {
+      try {
+        return await this.generateStructuredProposalWithOpenAi(text, apiKey, context);
+      } catch (error) {
+        console.error('AI structured fallback:', error);
+      }
+    }
+
+    return this.generateStructuredProposalWithRules(text);
+  }
+
   private async parseWithOpenAi(
     text: string,
     apiKey: string,
     context?: {
       catalog?: string;
       history?: string;
+      learningPrompts?: string;
     },
   ): Promise<ParsedIntent> {
     const model = this.configService.get<string>('OPENAI_AI_ASSISTANT_MODEL') || 'gpt-4.1-mini';
@@ -73,7 +93,7 @@ export class AiService {
               {
                 type: 'input_text',
                 text:
-                  'Eres un asistente técnico especializado en servicios eléctricos industriales. NO inventes servicios y devuelve solo JSON válido y conciso.',
+                  `Eres un asistente técnico especializado en servicios eléctricos industriales. NO inventes servicios y devuelve solo JSON válido y conciso.${context?.learningPrompts ? `\n\nPrompts de aprendizaje activos:\n${context.learningPrompts}` : ''}`,
               },
             ],
           },
@@ -91,24 +111,16 @@ export class AiService {
           format: {
             type: 'json_schema',
             name: 'quote_intent',
-            strict: true,
+            strict: false,
             schema: {
               type: 'object',
-              additionalProperties: false,
+              additionalProperties: true,
               properties: {
                 category: { type: ['string', 'null'] },
                 service: { type: ['string', 'null'] },
                 variables: {
                   type: 'object',
-                  additionalProperties: false,
-                  properties: {
-                    secciones: { type: ['number', 'null'] },
-                    cantidad: { type: ['number', 'null'] },
-                    equipo: { type: ['string', 'null'] },
-                    modelo: { type: ['string', 'null'] },
-                    tipo_servicio: { type: ['string', 'null'] },
-                  },
-                  required: ['secciones', 'cantidad', 'equipo', 'modelo', 'tipo_servicio'],
+                  additionalProperties: true,
                 },
                 keywords: {
                   type: 'array',
@@ -120,7 +132,6 @@ export class AiService {
                 },
                 confidence: { type: 'number' },
               },
-              required: ['category', 'service', 'variables', 'keywords', 'qualifiers', 'confidence'],
             },
           },
         },
@@ -132,7 +143,31 @@ export class AiService {
     }
 
     const payload = (await response.json()) as { output_text?: string };
-    const parsed = JSON.parse(payload.output_text || '{}') as ParsedIntent;
+    let parsedRaw: Record<string, unknown> = {};
+
+    if (payload.output_text) {
+      try {
+        parsedRaw = JSON.parse(payload.output_text);
+      } catch {
+        parsedRaw = {};
+      }
+    }
+
+    const parsed = {
+      category: typeof parsedRaw.category === 'string' ? parsedRaw.category : null,
+      service: typeof parsedRaw.service === 'string' ? parsedRaw.service : null,
+      variables:
+        typeof parsedRaw.variables === 'object' && parsedRaw.variables !== null
+          ? (parsedRaw.variables as Record<string, string | number>)
+          : {},
+      keywords: Array.isArray(parsedRaw.keywords)
+        ? (parsedRaw.keywords.filter((item) => typeof item === 'string') as string[])
+        : [],
+      qualifiers: Array.isArray(parsedRaw.qualifiers)
+        ? (parsedRaw.qualifiers.filter((item) => typeof item === 'string') as string[])
+        : [],
+      confidence: typeof parsedRaw.confidence === 'number' ? parsedRaw.confidence : 0.7,
+    } as ParsedIntent;
 
     return {
       category: parsed.category || null,
@@ -140,9 +175,139 @@ export class AiService {
       variables: parsed.variables || {},
       keywords: parsed.keywords || [],
       qualifiers: parsed.qualifiers || [],
-      confidence: Math.max(0, Math.min(1, parsed.confidence || 0.7)),
+      confidence: Math.max(0, Math.min(1, parsed.confidence)),
       engine: 'openai',
       aiStatus: 'openai_ok',
+    };
+  }
+
+  private async generateStructuredProposalWithOpenAi(
+    text: string,
+    apiKey: string,
+    context?: {
+      learningPrompts?: string;
+    },
+  ) {
+    const model = this.configService.get<string>('OPENAI_AI_ASSISTANT_MODEL') || 'gpt-4.1-mini';
+    const response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        input: [
+          {
+            role: 'system',
+            content: [
+              {
+                type: 'input_text',
+                text: `Genera una propuesta técnica estructurada en JSON para servicios eléctricos. No devuelvas texto libre.${context?.learningPrompts ? `\n\nPrompts de aprendizaje activos:\n${context.learningPrompts}` : ''}`,
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: [{ type: 'input_text', text }],
+          },
+        ],
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'structured_quote',
+            strict: true,
+            schema: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                servicios_recomendados: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      servicio: { type: 'string' },
+                      tareas: { type: 'array', items: { type: 'string' } },
+                      duracion_horas: { type: 'number' },
+                    },
+                    required: ['servicio', 'tareas', 'duracion_horas'],
+                  },
+                },
+                costo_estimado: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    materiales: { type: 'number' },
+                    mano_obra: { type: 'number' },
+                    total: { type: 'number' },
+                    moneda: { type: 'string' },
+                  },
+                  required: ['materiales', 'mano_obra', 'total', 'moneda'],
+                },
+                notas: { type: 'string' },
+              },
+              required: ['servicios_recomendados', 'costo_estimado', 'notas'],
+            },
+          },
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenAI structured failed: ${response.status} ${await response.text()}`);
+    }
+
+    const payload = (await response.json()) as { output_text?: string };
+    return {
+      engine: 'openai' as const,
+      ai_status: 'openai_ok' as const,
+      proposal: JSON.parse(payload.output_text || '{}') as Record<string, unknown>,
+    };
+  }
+
+  private generateStructuredProposalWithRules(text: string) {
+    const normalized = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const titleMatch = text.match(/titulo\s*:\s*(.+)/i);
+    const title = titleMatch?.[1]?.trim() || 'Servicio eléctrico';
+    const servicios = [];
+
+    if (/tablero/.test(normalized)) {
+      servicios.push({
+        servicio: 'Inspeccion y limpieza de tableros',
+        tareas: ['Desmontaje de tapas', 'Limpieza de contactos', 'Verificacion de conexiones'],
+        duracion_horas: 3,
+      });
+    }
+
+    if (/continuidad|aislamiento|proteccion/.test(normalized)) {
+      servicios.push({
+        servicio: 'Pruebas de continuidad y medicion de aislamiento',
+        tareas: ['Medicion con megohmetro', 'Registro de valores', 'Revision de protecciones termicas'],
+        duracion_horas: 3,
+      });
+    }
+
+    servicios.push({
+      servicio: 'Ajustes y recomendaciones',
+      tareas: ['Ajuste de conexiones flojas', 'Reporte de observaciones', 'Sugerencias de mantenimiento futuro'],
+      duracion_horas: 2,
+    });
+
+    return {
+      engine: 'rules' as const,
+      ai_status: 'fallback_no_key' as const,
+      proposal: {
+        titulo: title,
+        servicios_recomendados: servicios,
+        costo_estimado: {
+          materiales: 200,
+          mano_obra: 800,
+          total: 1000,
+          moneda: 'USD',
+        },
+        notas: 'Se recomienda validar el alcance final en sitio antes de emitir la cotizacion definitiva.',
+      },
     };
   }
 
@@ -223,6 +388,9 @@ export class AiService {
     if (normalized.includes('minigear')) {
       return 'SWBG';
     }
+    if (normalized.includes('34.5kv') || normalized.includes('34.5 kv') || normalized.includes('34.5v')) {
+      return 'SWBG';
+    }
     if (/\bccm\b/.test(normalized) || normalized.includes('centro de control de motores')) {
       return 'CCM';
     }
@@ -247,6 +415,9 @@ export class AiService {
 
   private detectService(normalized: string) {
     if (normalized.includes('pruebas y puesta en marcha')) {
+      return 'pruebas y puesta en marcha';
+    }
+    if (normalized.includes('puesta en servicio')) {
       return 'pruebas y puesta en marcha';
     }
     if (normalized.includes('pruebas completas')) {

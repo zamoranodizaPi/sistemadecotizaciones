@@ -1,7 +1,8 @@
 'use client';
 
 import { ArrowUpRight, MoveRight } from 'lucide-react';
-import { useDashboardMetrics, useQuotations } from '@/lib/api/hooks';
+import { useCompanyProfile, useDashboardMetrics, useQuotations } from '@/lib/api/hooks';
+import { resolveCompanyBrandName, resolveCompanyLogo, resolveCompanyTagline } from '@/lib/company-brand';
 import { buildDashboardCards, buildRevenueTrend } from '@/lib/dashboard';
 import { mapQuotationsForUi } from '@/lib/quotations';
 import {
@@ -66,9 +67,13 @@ function statusVariant(status: string) {
 }
 
 export function DashboardOverview() {
+  const companyProfileQuery = useCompanyProfile();
   const metricsQuery = useDashboardMetrics();
   const quotationsQuery = useQuotations();
   const { displayCurrency, exchangeRate } = useDisplaySettings();
+  const brandName = resolveCompanyBrandName(companyProfileQuery.data);
+  const tagline = resolveCompanyTagline(companyProfileQuery.data);
+  const logoUrl = resolveCompanyLogo(companyProfileQuery.data);
 
   if (metricsQuery.isLoading || quotationsQuery.isLoading) {
     return (
@@ -495,11 +500,11 @@ export function DashboardOverview() {
             <div>
               <div class="brand-wrap">
                 <div class="logo-box">
-                  <img src="/brand/logo.png" alt="SIEZA" />
+                  <img src="${logoUrl}" alt="${brandName}" />
                 </div>
                 <div>
-                  <div class="brand">SIEZA</div>
-                  <div class="slogan">energy solutions</div>
+                  <div class="brand">${brandName}</div>
+                  <div class="slogan">${tagline}</div>
                 </div>
               </div>
               <h1>Forecast</h1>

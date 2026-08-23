@@ -215,7 +215,7 @@ export function ClientsOverview() {
       });
 
       closeModal();
-      notify('Cliente actualizado', 'Los datos del cliente quedaron guardados.');
+      notify('Cliente actualizado', 'Si cambiaste el nombre del contacto principal, el anterior se conservó como historial de la empresa.');
       return;
     }
 
@@ -395,7 +395,7 @@ export function ClientsOverview() {
                             <p className="text-xs text-[var(--color-text-muted)]">{client.segment}</p>
                           </div>
                         </DataCell>
-                        <DataCell>{client.rfc}</DataCell>
+                        <DataCell>{client.rfc || 'Sin RFC'}</DataCell>
                         <DataCell>
                           <div>
                             <p className="font-medium">{mainContact?.name || 'Sin contacto'}</p>
@@ -419,7 +419,7 @@ export function ClientsOverview() {
               <>
                 <CardHeader
                   title={selectedClient.legalName}
-                  description={`${selectedClient.segment} · ${selectedClient.rfc}`}
+                  description={`${selectedClient.segment} · ${selectedClient.rfc || 'Sin RFC'}`}
                   action={<Badge variant="info">{selectedClient.activeQuotations} cotizaciones</Badge>}
                 />
                 <CardContent className="space-y-5">
@@ -535,7 +535,7 @@ export function ClientsOverview() {
               <div>
                 <p className="text-sm font-semibold text-[var(--color-text)]">Contacto principal</p>
                 <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-                  Este contacto quedará listo para usarse en cotizaciones y seguimiento comercial.
+                  Este contacto quedará listo para usarse en cotizaciones y seguimiento comercial. Si cambias el nombre al editar, el contacto anterior se conservará.
                 </p>
               </div>
               {mode === 'clone' ? (

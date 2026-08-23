@@ -13,7 +13,7 @@ export class AiAssistantController {
 
   @Post('suggest-quote')
   suggestQuote(@Body() body: SuggestQuoteDto) {
-    return this.aiAssistantService.suggestQuote(body.text);
+    return this.aiAssistantService.suggestQuote(body.text, body.mode);
   }
 
   @Post('create-deal')
@@ -26,11 +26,13 @@ export class AiAssistantController {
       body.title,
       body.items,
       body.workItems,
+      body.commercialText,
+      body.mode,
     );
   }
 
   @Post('feedback')
   feedback(@Body() body: AiFeedbackDto) {
-    return this.aiAssistantService.saveFeedback(body.input, body.original, body.corrected);
+    return this.aiAssistantService.saveFeedback(body.input, body.original, body.corrected, body.mode);
   }
 }

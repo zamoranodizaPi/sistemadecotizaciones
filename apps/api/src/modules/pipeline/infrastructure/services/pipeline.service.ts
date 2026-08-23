@@ -148,7 +148,7 @@ export class PipelineService {
   async getPipelineSummary() {
     const pipeline = await this.ensureDefaultPipeline();
     const quotations = await this.prisma.quotation.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, stageId: { not: null } },
       include: { stage: true },
     });
 

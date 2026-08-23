@@ -3,6 +3,7 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { UserRole } from '@prisma/client';
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'crypto';
@@ -11,16 +12,26 @@ import { PrismaService } from '../../../../shared/infrastructure/prisma.service'
 import { CreateUserDto } from '../../application/dto/auth.dto';
 
 const scrypt = promisify(scryptCallback);
-const BOOTSTRAP_ADMIN_EMAIL = 'juan.alvarez@sieza.mx';
-const BOOTSTRAP_ADMIN_PASSWORD = 'JuanRamon2026!';
-const BOOTSTRAP_ADMIN_NAME = 'Juan Ramon Alvarez Echavarria';
+const DEFAULT_BOOTSTRAP_ADMIN_NAME = 'Administrador';
 
 @Injectable()
 export class AuthService {
+  private readonly bootstrapAdminEmail: string;
+  private readonly bootstrapAdminName: string;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    this.bootstrapAdminEmail = (
+      this.configService.get<string>('BOOTSTRAP_ADMIN_EMAIL') || 'admin@sieza.mx'
+    )
+      .toLowerCase()
+      .trim();
+    this.bootstrapAdminName =
+      this.configService.get<string>('BOOTSTRAP_ADMIN_NAME') || DEFAULT_BOOTSTRAP_ADMIN_NAME;
+  }
 
   async login(email: string, password: string) {
     await this.ensureBootstrapAdmin();
@@ -47,13 +58,6 @@ export class AuthService {
     return {
       accessToken,
       user: this.serializeUser(user),
-      bootstrapCredentials:
-        user.email === BOOTSTRAP_ADMIN_EMAIL
-          ? {
-              email: BOOTSTRAP_ADMIN_EMAIL,
-              password: BOOTSTRAP_ADMIN_PASSWORD,
-            }
-          : undefined,
     };
   }
 
@@ -149,11 +153,11 @@ export class AuthService {
 
   async ensureBootstrapAdmin() {
     const existing = await this.prisma.user.findUnique({
-      where: { email: BOOTSTRAP_ADMIN_EMAIL },
+      where: { email: this.bootstrapAdminEmail },
     });
 
     if (existing) {
-      const needsRefresh = existing.name !== BOOTSTRAP_ADMIN_NAME || existing.role !== UserRole.ADMIN;
+      const needsRefresh = existing.role !== UserRole.ADMIN || !existing.isActive;
       if (!needsRefresh) {
         return existing;
       }
@@ -161,22 +165,38 @@ export class AuthService {
       return this.prisma.user.update({
         where: { id: existing.id },
         data: {
-          name: BOOTSTRAP_ADMIN_NAME,
           role: UserRole.ADMIN,
           isActive: true,
         },
       });
     }
 
+    const password = this.resolveBootstrapPassword();
+
     return this.prisma.user.create({
       data: {
-        name: BOOTSTRAP_ADMIN_NAME,
-        email: BOOTSTRAP_ADMIN_EMAIL,
-        passwordHash: await this.hashPassword(BOOTSTRAP_ADMIN_PASSWORD),
+        name: this.bootstrapAdminName,
+        email: this.bootstrapAdminEmail,
+        passwordHash: await this.hashPassword(password),
         role: UserRole.ADMIN,
         isActive: true,
       },
     });
+  }
+
+  private resolveBootstrapPassword() {
+    const configured = this.configService.get<string>('BOOTSTRAP_ADMIN_PASSWORD');
+    if (configured) {
+      return configured;
+    }
+
+    const generated = randomBytes(12).toString('base64url');
+    console.log(
+      `[auth] BOOTSTRAP_ADMIN_PASSWORD no está configurada. Se generó una contraseña temporal ` +
+        `para ${this.bootstrapAdminEmail}: ${generated}\n` +
+        '[auth] Defínela en el .env para fijarla de forma permanente (esta se pierde al reiniciar el proceso).',
+    );
+    return generated;
   }
 
   private serializeUser(user: {

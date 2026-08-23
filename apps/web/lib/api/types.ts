@@ -36,10 +36,6 @@ export type AuthUser = {
 export type LoginResponse = {
   accessToken: string;
   user: AuthUser;
-  bootstrapCredentials?: {
-    email: string;
-    password: string;
-  };
 };
 
 export type ActivityType =
@@ -104,11 +100,32 @@ export type ExchangeRateResponse = {
   updatedAt: string;
 };
 
+export type CompanyProfileResponse = {
+  id: string;
+  legalName: string;
+  commercialName: string | null;
+  brandShortName: string | null;
+  tagline: string | null;
+  logoUrl: string | null;
+  rfc: string | null;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  defaultDurationOfWork: string | null;
+  defaultTerms: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ClientResponse = Array<{
   id: string;
   legalName: string;
   commercialName: string | null;
-  rfc: string;
+  rfc: string | null;
   address?: string | null;
   contacts: Array<{
     id: string;
@@ -147,12 +164,16 @@ export type QuotationListResponse = Array<{
   workOrderNumber?: string | null;
   pricingRule?: string | null;
   pricingRuleLabel?: string | null;
+  contactName?: string | null;
+  partCount?: number | null;
+  finalChargeRate?: string | number | null;
   discountPercent?: string | number | null;
   requiresApproval?: boolean;
   approvalStatus?: ApprovalStatus;
   approvalReason?: string | null;
   title: string;
   status: QuotationStatus;
+  subtotal?: string | number;
   total: string | number;
   currency: string;
   createdAt: string;
@@ -211,6 +232,9 @@ export type QuotationListResponse = Array<{
     supplyName: string;
     categoryName: string;
     pricingProfileName?: string | null;
+    partNumber?: number | null;
+    partQuantity?: number | null;
+    activityDays?: number | null;
     isOptional?: boolean;
     optionGroup?: string | null;
     optionLabel?: string | null;
@@ -328,8 +352,15 @@ export type ServiceTemplateResponse = Array<{
   name: string;
   templateType?: string | null;
   items: Array<{
-    serviceId: string;
-    pricingProfileId: string;
+    serviceId?: string;
+    pricingProfileId?: string;
+    code?: string;
+    name?: string;
+    categoryName?: string;
+    pricingProfileName?: string;
+    partNumber?: number;
+    partQuantity?: number;
+    activityDays?: number;
     quantity: number;
     unitPriceOverride?: number;
     isOptional?: boolean;
@@ -363,6 +394,10 @@ export type WorkItemCatalogResponse = Array<{
 
 export type WorkItemCatalogEntry = WorkItemCatalogResponse[number];
 
+export type QuotationLearningResponse = {
+  learned: boolean;
+};
+
 export type ReusableTextBlockResponse = Array<{
   id: string;
   name: string;
@@ -373,6 +408,7 @@ export type ReusableTextBlockResponse = Array<{
 }>;
 
 export type AiSuggestedQuoteResponse = {
+  mode: 'CATALOG_MATCH' | 'STRUCTURED_JSON';
   engine: 'openai' | 'rules' | 'local_learning';
   ai_status:
     | 'openai_ok'
@@ -395,6 +431,8 @@ export type AiSuggestedQuoteResponse = {
     total: number;
   }>;
   suggested_work_items: string[];
+  suggested_commercial_text: string;
+  structured_output: Record<string, unknown> | null;
   historical_references: Array<{
     id: string;
     folio: string;
@@ -410,10 +448,16 @@ export type AiSuggestedQuoteResponse = {
   missing_fields: string[];
   needs_review: boolean;
   rules_applied: string[];
+  applied_rule?: {
+    id: string;
+    category?: string | null;
+    service?: string | null;
+  } | null;
 };
 
 export type AiFeedbackResponse = {
   saved: boolean;
+  mode?: 'CATALOG_MATCH' | 'STRUCTURED_JSON';
   ai_status: 'feedback_learned';
   normalized_input: string;
 };
@@ -424,6 +468,118 @@ export type AiCreateDealResponse = {
   title: string;
   status: QuotationStatus;
   suggestion: AiSuggestedQuoteResponse;
+};
+
+export type AiLearningPromptResponse = Array<{
+  id: string;
+  mode: 'CATALOG_MATCH' | 'STRUCTURED_JSON';
+  name: string;
+  systemPrompt: string;
+  inputExample: string | null;
+  outputExample: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}>;
+
+export type AiLearningTrainingResponse = Array<{
+  id: string;
+  input: Record<string, unknown>;
+  output: Record<string, unknown>;
+  aceptado?: boolean | null;
+  createdAt: string;
+}>;
+
+export type AiLearningDatasetResponse = {
+  trainingDataset: Array<{
+    input: Record<string, unknown>;
+    output: Record<string, unknown>;
+    aceptado?: boolean;
+  }>;
+};
+
+export type AiProyectoResponse = {
+  engine: 'openai' | 'rules';
+  input: {
+    nombre: string;
+    cliente: string;
+    sector: string;
+    descripcion: string;
+    nivelComplejidad: string;
+    condiciones: {
+      complejidad: string;
+      zona: string;
+      urgencia: string;
+      margen?: number;
+    };
+  };
+  similares: Array<{
+    id: string;
+    score: number;
+    aceptado: boolean | null;
+    costSignals?: string[];
+    costInfluence?: number;
+  }>;
+  proyecto: {
+    id: string;
+    nombre: string;
+    cliente: string;
+    sector: string;
+    descripcion: string;
+    complejidad: string;
+    zona: string;
+    urgencia: string;
+    costoBaseMaterial?: string | number | null;
+    costoManoObra?: string | number | null;
+    factorComplejidad?: string | number | null;
+    factorZona?: string | number | null;
+    factorUrgencia?: string | number | null;
+    margen?: string | number | null;
+    totalFinal?: string | number | null;
+    createdAt: string;
+    soluciones: Array<{
+      id: string;
+      tipo: string;
+      incluyeIngenieria: boolean;
+      incluyeInstalacion: boolean;
+      incluyePuestaMarcha: boolean;
+      incluyeMantenimiento: boolean;
+      createdAt: string;
+      componentes: Array<{
+        id: string;
+        tipo: string;
+        nombre: string;
+        marca: string | null;
+        categoria: string;
+        costoBase: string | number;
+        cantidad: string | number;
+        createdAt: string;
+      }>;
+    }>;
+  };
+  costos: {
+    costo_base: number;
+    materiales: number;
+    mano_obra: number;
+    factores: {
+      complejidad: number;
+      zona: number;
+      urgencia: number;
+    };
+    margen: number;
+    total_final: number;
+  };
+  trainingExampleId: string;
+};
+
+export type AiProyectoConvertResponse = {
+  proyectoId: string;
+  quotationId: string;
+  folio: string;
+  title: string;
+  matchedItems: number;
+  unmatchedComponents: string[];
 };
 
 export type AssignableUserResponse = AuthUser[];
@@ -467,7 +623,58 @@ export type ImportConfirmResponse = {
   }>;
 };
 
+export type ClientImportPreviewResponse = {
+  source?: string;
+  total: number;
+  rows: Array<{
+    nombreEmpresa: string;
+    contactoPrincipal: string;
+    puestoContacto?: string;
+    direccionCompleta?: string;
+    ciudad?: string;
+    estado?: string;
+    pais?: string;
+    telefono?: string;
+    correoElectronico?: string;
+    rfc: string;
+    sector?: string;
+  }>;
+};
+
+export type ClientImportConfirmResponse = {
+  processed: number;
+  logs: Array<{
+    companyName: string;
+    rfc: string;
+    contact: string;
+    sector?: string | null;
+    action: string;
+    source?: string;
+  }>;
+};
+
+export type ActivityImportPreviewResponse = {
+  source?: string;
+  total: number;
+  rows: Array<{
+    name: string;
+  }>;
+};
+
+export type ActivityImportConfirmResponse = {
+  processed: number;
+  logs: Array<{
+    activityName: string;
+    action: string;
+    source?: string;
+  }>;
+};
+
 export type ExportCatalogResponse = {
   fileName: string;
   file: string;
 };
+
+export type ExportClientsResponse = ExportCatalogResponse;
+export type ExportActivitiesResponse = ExportCatalogResponse;
+export type ExportCombinedTemplateResponse = ExportCatalogResponse;

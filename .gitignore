@@ -8,3 +8,5 @@ coverage
 apps/api/generated
 apps/api/prisma/dev.db
 .DS_Store
+._*
+*.tsbuildinfo

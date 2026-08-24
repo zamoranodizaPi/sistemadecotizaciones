@@ -521,7 +521,7 @@ export class PdfService {
     }
 
     return `
-      <div class="section">
+      <div class="section note-section">
         <div class="section-header">
           <p class="section-title">Trabajos a Realizar</p>
         </div>
@@ -539,7 +539,7 @@ export class PdfService {
     }
 
     return `
-      <div class="section">
+      <div class="section note-section">
         <div class="section-header">
           <p class="section-title">Condiciones Generales</p>
         </div>
@@ -561,14 +561,14 @@ export class PdfService {
 
     const workLines = this.normalizeWorkItemLines(workSection.content);
 
-    const workPages = this.chunkLinesByUnits(workLines, 22);
+    const workPages = this.chunkLinesByUnits(workLines, 14);
 
     return workPages
       .map(
         (lines) => `
           <div class="page page-break-before continuation-page">
             ${this.buildContinuationHeader(payload, logoDataUri, issuer)}
-            <div class="section">
+            <div class="section note-section">
               <div class="section-header">
                 <p class="section-title">Trabajos a Realizar</p>
               </div>
@@ -597,7 +597,7 @@ export class PdfService {
     }
 
     const workLines = this.normalizeWorkItemLines(workSection.content);
-    const workPages = this.chunkLinesByUnits(workLines, 22);
+    const workPages = this.chunkLinesByUnits(workLines, 14);
 
     if (!workPages.length) {
       return {
@@ -610,7 +610,7 @@ export class PdfService {
 
     const inlineSection = firstPageLines.length
       ? `
-          <div class="section">
+          <div class="section note-section">
             <div class="section-header">
               <p class="section-title">Trabajos a Realizar</p>
             </div>
@@ -628,7 +628,7 @@ export class PdfService {
         (lines) => `
           <div class="page page-break-before continuation-page">
             ${this.buildContinuationHeader(payload, logoDataUri, issuer)}
-            <div class="section">
+            <div class="section note-section">
               <div class="section-header">
                 <p class="section-title">Trabajos a Realizar</p>
               </div>
@@ -651,14 +651,14 @@ export class PdfService {
 
   private buildNotePages(payload: PdfPayload, logoDataUri: string | null, issuer: typeof DEFAULT_ISSUER) {
     const noteSections = this.buildNoteSectionEntries(payload.quotation);
-    const notePages = this.chunkNoteSections(noteSections, 22);
+    const notePages = this.chunkNoteSections(noteSections, 14);
 
     return notePages
       .map(
         (sections) => `
           <div class="page page-break-before continuation-page">
             ${this.buildContinuationHeader(payload, logoDataUri, issuer)}
-            <div class="section">
+            <div class="section note-section">
               <div class="section-header">
                 <p class="section-title">Condiciones Generales</p>
               </div>
@@ -683,7 +683,7 @@ export class PdfService {
 
   private buildNoteLayout(payload: PdfPayload, logoDataUri: string | null, issuer: typeof DEFAULT_ISSUER) {
     const noteSections = this.buildNoteSectionEntries(payload.quotation);
-    const notePages = this.chunkNoteSections(noteSections, 22);
+    const notePages = this.chunkNoteSections(noteSections, 14);
 
     if (!notePages.length) {
       return {
@@ -696,7 +696,7 @@ export class PdfService {
 
     const inlineSection = firstPageSections.length
       ? `
-          <div class="section">
+          <div class="section note-section">
             <div class="section-header">
               <p class="section-title">Condiciones Generales</p>
             </div>
@@ -721,7 +721,7 @@ export class PdfService {
         (sections) => `
           <div class="page page-break-before continuation-page">
             ${this.buildContinuationHeader(payload, logoDataUri, issuer)}
-            <div class="section">
+            <div class="section note-section">
               <div class="section-header">
                 <p class="section-title">Condiciones Generales</p>
               </div>
@@ -840,7 +840,9 @@ export class PdfService {
   }
 
   private estimateTextUnits(text: string, charsPerUnit: number) {
-    return Math.max(1, Math.ceil(text.trim().length / charsPerUnit));
+    const trimmed = text.trim();
+    const forcedBreaks = (trimmed.match(/<br\s*\/?>/gi) || []).length;
+    return Math.max(1, Math.ceil(trimmed.length / charsPerUnit) + forcedBreaks);
   }
 
   private normalizeWorkItemLines(content: string) {
@@ -1262,6 +1264,10 @@ export class PdfService {
               break-inside: auto;
               page-break-inside: auto;
             }
+            .note-section {
+              break-inside: avoid;
+              page-break-inside: avoid;
+            }
             .concept-section {
               break-inside: auto;
               page-break-inside: auto;
@@ -1421,8 +1427,8 @@ export class PdfService {
               background: #fcfcfd;
               border: 1px solid #eef2f7;
               padding: 11px;
-              break-inside: auto;
-              page-break-inside: auto;
+              break-inside: avoid;
+              page-break-inside: avoid;
             }
             .note-card + .note-card {
               margin-top: 8px;

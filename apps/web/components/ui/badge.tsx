@@ -8,9 +8,14 @@ type BadgeVariant =
   | 'warning'
   | 'danger'
   | 'new'
+  | 'draft'
   | 'progress'
   | 'sent'
+  | 'viewed'
+  | 'negotiation'
   | 'accepted'
+  | 'rejected'
+  | 'expired'
   | 'executed'
   | 'receivable'
   | 'paid';
@@ -22,9 +27,14 @@ const variants: Record<BadgeVariant, string> = {
   warning: 'bg-amber-50 text-amber-700',
   danger: 'bg-rose-50 text-rose-700',
   new: 'bg-slate-100 text-slate-700',
+  draft: 'bg-slate-200 text-slate-800',
   progress: 'bg-blue-50 text-blue-700',
   sent: 'bg-violet-50 text-violet-700',
+  viewed: 'bg-cyan-50 text-cyan-700',
+  negotiation: 'bg-fuchsia-50 text-fuchsia-700',
   accepted: 'bg-emerald-50 text-emerald-700',
+  rejected: 'bg-rose-50 text-rose-700',
+  expired: 'bg-amber-50 text-amber-700',
   executed: 'bg-orange-50 text-orange-700',
   receivable: 'bg-amber-50 text-amber-700',
   paid: 'bg-emerald-100 text-emerald-900',
@@ -51,4 +61,3 @@ export function Badge({
     </span>
   );
 }
-

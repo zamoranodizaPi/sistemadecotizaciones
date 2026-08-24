@@ -7,9 +7,15 @@ import { Roles } from '../../../auth/presentation/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../../auth/presentation/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../auth/presentation/guards/roles.guard';
 import {
+  CreateServiceCatalogDto,
+  CreateReusableTextBlockDto,
+  CreateWorkItemCatalogDto,
   CreateQuotationActivityDto,
   CreateQuotationDto,
   UpdateQuotationDto,
+  UpdateServiceCatalogDto,
+  UpdateReusableTextBlockDto,
+  UpdateWorkItemCatalogDto,
   UpdateQuotationTemplateDto,
   UpdateQuotationCommercialDto,
 } from '../../application/dto/create-quotation.dto';
@@ -43,9 +49,68 @@ export class QuotationsController {
     return this.quotationsService.listServiceTemplates();
   }
 
+  @Post('service-templates')
+  @Roles('ADMIN', 'SALES')
+  createServiceTemplate(@Body() body: CreateServiceCatalogDto) {
+    return this.quotationsService.createServiceTemplate(body);
+  }
+
+  @Patch('service-templates/:id')
+  @Roles('ADMIN', 'SALES')
+  updateServiceTemplate(@Param('id') id: string, @Body() body: UpdateServiceCatalogDto) {
+    return this.quotationsService.updateServiceTemplate(id, body);
+  }
+
+  @Delete('service-templates/:id')
+  @Roles('ADMIN', 'SALES')
+  deleteServiceTemplate(@Param('id') id: string) {
+    return this.quotationsService.deleteServiceTemplate(id);
+  }
+
   @Get('work-items/catalog')
   workItemsCatalog() {
     return this.quotationsService.listWorkItemCatalog();
+  }
+
+  @Get('reusable-text-blocks')
+  reusableTextBlocks() {
+    return this.quotationsService.listReusableTextBlocks();
+  }
+
+  @Post('work-items/catalog')
+  @Roles('ADMIN', 'SALES')
+  createWorkItemCatalog(@Body() body: CreateWorkItemCatalogDto) {
+    return this.quotationsService.createWorkItemCatalog(body);
+  }
+
+  @Patch('work-items/catalog/:id')
+  @Roles('ADMIN', 'SALES')
+  updateWorkItemCatalog(@Param('id') id: string, @Body() body: UpdateWorkItemCatalogDto) {
+    return this.quotationsService.updateWorkItemCatalog(id, body);
+  }
+
+  @Delete('work-items/catalog/:id')
+  @Roles('ADMIN', 'SALES')
+  deleteWorkItemCatalog(@Param('id') id: string) {
+    return this.quotationsService.deleteWorkItemCatalog(id);
+  }
+
+  @Post('reusable-text-blocks')
+  @Roles('ADMIN', 'SALES')
+  createReusableTextBlock(@Body() body: CreateReusableTextBlockDto) {
+    return this.quotationsService.createReusableTextBlock(body);
+  }
+
+  @Patch('reusable-text-blocks/:id')
+  @Roles('ADMIN', 'SALES')
+  updateReusableTextBlock(@Param('id') id: string, @Body() body: UpdateReusableTextBlockDto) {
+    return this.quotationsService.updateReusableTextBlock(id, body);
+  }
+
+  @Delete('reusable-text-blocks/:id')
+  @Roles('ADMIN', 'SALES')
+  deleteReusableTextBlock(@Param('id') id: string) {
+    return this.quotationsService.deleteReusableTextBlock(id);
   }
 
   @Post()
@@ -96,6 +161,66 @@ export class QuotationsController {
     return this.quotationsService.updateCommercialTerms(id, body, user.userId);
   }
 
+  @Post(':id/duplicate')
+  @Roles('ADMIN', 'SALES')
+  duplicate(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.quotationsService.duplicateQuotation(id, user.userId);
+  }
+
+  @Post(':id/learn')
+  @Roles('ADMIN', 'SALES')
+  learn(@Param('id') id: string) {
+    return this.quotationsService.learnQuotation(id);
+  }
+
+  @Post('learn-all')
+  @Roles('ADMIN')
+  rebuildLearning() {
+    return this.quotationsService.rebuildLearningFromQuotations();
+  }
+
+  @Post(':id/mark-sent')
+  @Roles('ADMIN', 'SALES')
+  markSent(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.quotationsService.markQuotationInteraction(id, 'sent', user.userId);
+  }
+
+  @Post(':id/mark-viewed')
+  @Roles('ADMIN', 'SALES')
+  markViewed(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.quotationsService.markQuotationInteraction(id, 'viewed', user.userId);
+  }
+
+  @Post(':id/mark-accepted')
+  @Roles('ADMIN', 'SALES')
+  markAccepted(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.quotationsService.markQuotationInteraction(id, 'accepted', user.userId);
+  }
+
+  @Post(':id/mark-rejected')
+  @Roles('ADMIN', 'SALES')
+  markRejected(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.quotationsService.markQuotationInteraction(id, 'rejected', user.userId);
+  }
+
+  @Post(':id/approve-discount')
+  @Roles('ADMIN')
+  approveDiscount(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.quotationsService.resolveQuotationApproval(id, 'APPROVED', user.userId);
+  }
+
+  @Post(':id/reject-discount')
+  @Roles('ADMIN')
+  rejectDiscount(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.quotationsService.resolveQuotationApproval(id, 'REJECTED', user.userId);
+  }
+
+  @Post(':id/convert-to-work-order')
+  @Roles('ADMIN', 'SALES')
+  convertToWorkOrder(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.quotationsService.convertQuotationToWorkOrder(id, user.userId);
+  }
+
   @Get(':id/activities')
   activities(@Param('id') id: string) {
     return this.quotationsService.listActivities(id);
@@ -119,6 +244,16 @@ export class QuotationsController {
   @Post(':id/pdf/simple')
   pdfSimple(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
     return this.quotationsService.generateSimplifiedPdf(id, user.userId);
+  }
+
+  @Post(':id/report-word')
+  reportWord(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.quotationsService.generateWordReport(id, user.userId);
+  }
+
+  @Post(':id/report-word/suggested')
+  suggestedReportWord(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+    return this.quotationsService.generateSuggestedWordReport(id, user.userId);
   }
 
   @Delete(':id')

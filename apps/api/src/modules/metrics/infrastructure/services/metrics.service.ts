@@ -19,10 +19,15 @@ export class MetricsService {
     );
     const forecast = quotations.reduce((sum, quotation) => {
       const probabilityMap: Record<string, number> = {
+        BORRADOR: 0.05,
         NUEVA: 0.1,
         EN_PROCESO: 0.3,
-        ENVIADA: 0.6,
+        ENVIADA: 0.55,
+        VISTA: 0.7,
+        NEGOCIACION: 0.82,
         ACEPTADA: 1,
+        RECHAZADA: 0,
+        VENCIDA: 0,
         EJECUTADA: 1,
         CUENTAS_POR_COBRAR: 1,
         PAGADA: 1,
@@ -40,13 +45,15 @@ export class MetricsService {
         quotation.client.legalName,
         (revenueByClient.get(quotation.client.legalName) || 0) + Number(quotation.total),
       );
-      pipeline.set(
-        quotation.status,
-        (pipeline.get(quotation.status) || 0) + Number(quotation.total),
-      );
+      if (quotation.stageId) {
+        pipeline.set(
+          quotation.status,
+          (pipeline.get(quotation.status) || 0) + Number(quotation.total),
+        );
+      }
 
       for (const item of quotation.items) {
-        services.set(item.serviceName, (services.get(item.serviceName) || 0) + Number(item.quantity));
+        services.set(item.supplyName, (services.get(item.supplyName) || 0) + Number(item.quantity));
       }
     }
 

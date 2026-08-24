@@ -9,7 +9,7 @@ import {
   useCloneClient,
   useDeleteClient,
 } from '@/lib/api/hooks';
-import { mapClientsForUi } from '@/lib/clients';
+import { CLIENT_INDUSTRIES, mapClientsForUi } from '@/lib/clients';
 import { convertCurrencyAmount, formatCurrency } from '@/lib/utils';
 import { useDisplaySettings } from '@/components/providers/display-settings-provider';
 import { useSession } from '@/components/providers/session-provider';
@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Modal } from '@/components/ui/modal';
+import { Select } from '@/components/ui/select';
 import { SectionHeading } from '@/components/ui/section-heading';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DataCell, DataRow, DataTable } from '@/components/ui/table';
@@ -29,6 +30,7 @@ type ClientFormState = {
   commercialName: string;
   rfc: string;
   address: string;
+  industry: string;
   contactName: string;
   contactEmail: string;
   contactPhone: string;
@@ -40,6 +42,7 @@ const emptyForm: ClientFormState = {
   commercialName: '',
   rfc: '',
   address: '',
+  industry: '',
   contactName: '',
   contactEmail: '',
   contactPhone: '',
@@ -133,6 +136,7 @@ export function ClientsOverview() {
       commercialName: client.commercialName,
       rfc: client.rfc,
       address: client.address,
+      industry: client.industry,
       contactName: mainContact?.name || '',
       contactEmail: mainContact?.email === 'Sin correo' ? '' : mainContact?.email || '',
       contactPhone: mainContact?.phone || '',
@@ -153,6 +157,7 @@ export function ClientsOverview() {
       commercialName: client.commercialName,
       rfc: '',
       address: client.address,
+      industry: client.industry,
       contactName: '',
       contactEmail: '',
       contactPhone: '',
@@ -181,6 +186,7 @@ export function ClientsOverview() {
         commercialName: form.commercialName || undefined,
         rfc: form.rfc,
         address: form.address || undefined,
+        industry: form.industry || undefined,
         contacts: [
           {
             fullName: form.contactName,
@@ -204,6 +210,7 @@ export function ClientsOverview() {
         commercialName: form.commercialName || undefined,
         rfc: form.rfc,
         address: form.address || undefined,
+        industry: form.industry || undefined,
         contacts: [
           {
             fullName: form.contactName,
@@ -215,7 +222,7 @@ export function ClientsOverview() {
       });
 
       closeModal();
-      notify('Cliente actualizado', 'Los datos del cliente quedaron guardados.');
+      notify('Cliente actualizado', 'Si cambiaste el nombre del contacto principal, el anterior se conservó como historial de la empresa.');
       return;
     }
 
@@ -377,7 +384,7 @@ export function ClientsOverview() {
                   </div>
                 </div>
 
-                <DataTable columns={['Cuenta', 'RFC', 'Contacto principal', 'Cotizaciones', 'Revenue']}>
+                <DataTable columns={['Cuenta', 'RFC', 'Industria', 'Contacto principal', 'Cotizaciones', 'Revenue']}>
                   {filteredClients.map((client) => {
                     const mainContact = client.contacts[0];
                     const selected = client.id === selectedClient?.id;
@@ -395,7 +402,8 @@ export function ClientsOverview() {
                             <p className="text-xs text-[var(--color-text-muted)]">{client.segment}</p>
                           </div>
                         </DataCell>
-                        <DataCell>{client.rfc}</DataCell>
+                        <DataCell>{client.rfc || 'Sin RFC'}</DataCell>
+                        <DataCell>{client.industry || 'Sin definir'}</DataCell>
                         <DataCell>
                           <div>
                             <p className="font-medium">{mainContact?.name || 'Sin contacto'}</p>
@@ -419,7 +427,7 @@ export function ClientsOverview() {
               <>
                 <CardHeader
                   title={selectedClient.legalName}
-                  description={`${selectedClient.segment} · ${selectedClient.rfc}`}
+                  description={`${selectedClient.industry || 'Industria sin definir'} · ${selectedClient.rfc || 'Sin RFC'}`}
                   action={<Badge variant="info">{selectedClient.activeQuotations} cotizaciones</Badge>}
                 />
                 <CardContent className="space-y-5">
@@ -529,13 +537,21 @@ export function ClientsOverview() {
                 <Input value={form.rfc} onChange={(event) => setForm((current) => ({ ...current, rfc: event.target.value }))} placeholder="RFC" />
                 <Input value={form.contactRole} onChange={(event) => setForm((current) => ({ ...current, contactRole: event.target.value }))} placeholder="Puesto del contacto" disabled={mode === 'clone'} />
               </div>
+              <Select value={form.industry} onChange={(event) => setForm((current) => ({ ...current, industry: event.target.value }))}>
+                <option value="">Industria (sin definir)</option>
+                {CLIENT_INDUSTRIES.map((industry) => (
+                  <option key={industry} value={industry}>
+                    {industry}
+                  </option>
+                ))}
+              </Select>
               <Textarea value={form.address} onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))} placeholder="Dirección opcional" className="min-h-[160px]" />
             </div>
             <div className="space-y-4 rounded-[28px] border border-[var(--color-border)] bg-[var(--color-panel-subtle)] p-5">
               <div>
                 <p className="text-sm font-semibold text-[var(--color-text)]">Contacto principal</p>
                 <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-                  Este contacto quedará listo para usarse en cotizaciones y seguimiento comercial.
+                  Este contacto quedará listo para usarse en cotizaciones y seguimiento comercial. Si cambias el nombre al editar, el contacto anterior se conservará.
                 </p>
               </div>
               {mode === 'clone' ? (

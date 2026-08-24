@@ -5,8 +5,8 @@ export function mapCatalogForUi(catalog: CatalogResponse) {
     id: category.id,
     code: category.code,
     name: category.name,
-    description: category.description || `${category.services.length} servicios activos`,
-    services: category.services.map((service) => ({
+    description: category.description || `${category.supplies.length} suministros activos`,
+    services: category.supplies.map((service) => ({
       id: service.id,
       code: service.code,
       name: service.name,

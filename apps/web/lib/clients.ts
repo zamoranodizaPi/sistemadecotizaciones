@@ -1,13 +1,27 @@
 import type { ClientResponse } from '@/lib/api/types';
 import type { SupportedCurrency } from '@/lib/utils';
 
+/**
+ * Catalogo cerrado de industrias de cliente — debe coincidir con
+ * apps/api/src/modules/clients/domain/client-industries.ts.
+ */
+export const CLIENT_INDUSTRIES = [
+  'Minería',
+  'Industria general',
+  'Subestaciones',
+  'Integrador industrial',
+  'Generación de energía',
+  'Otro',
+] as const;
+
 export function mapClientsForUi(clients: ClientResponse) {
   return clients.map((client) => ({
     id: client.id,
     legalName: client.legalName,
     commercialName: client.commercialName || '',
     segment: client.commercialName || 'Cuenta empresarial',
-    rfc: client.rfc,
+    industry: client.industry || '',
+    rfc: client.rfc || '',
     address: client.address || '',
     contacts: client.contacts.map((contact) => ({
       id: contact.id,

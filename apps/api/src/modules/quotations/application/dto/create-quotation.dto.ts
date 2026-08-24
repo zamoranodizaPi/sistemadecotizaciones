@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEnum,
   IsArray,
   IsNumber,
@@ -12,6 +13,75 @@ import { Type } from 'class-transformer';
 import { ActivityType, SpecialConsiderationType } from '@prisma/client';
 
 class QuotationItemDto {
+  @IsOptional()
+  @IsUUID()
+  serviceId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  pricingProfileId?: string;
+
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  categoryName?: string;
+
+  @IsOptional()
+  @IsString()
+  pricingProfileName?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  partNumber?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  partQuantity?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  activityDays?: number;
+
+  @IsNumber()
+  @Min(1)
+  quantity!: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  unitPriceOverride?: number;
+
+  @IsOptional()
+  isOptional?: boolean;
+
+  @IsOptional()
+  @IsString()
+  optionGroup?: string;
+
+  @IsOptional()
+  @IsString()
+  optionLabel?: string;
+}
+
+class CommercialSectionDto {
+  @IsString()
+  title!: string;
+
+  @IsString()
+  content!: string;
+}
+
+class ServiceCatalogItemDto {
   @IsUUID()
   serviceId!: string;
 
@@ -23,17 +93,15 @@ class QuotationItemDto {
   quantity!: number;
 
   @IsOptional()
-  @IsNumber()
-  @Min(0)
-  unitPriceOverride?: number;
-}
+  isOptional?: boolean;
 
-class CommercialSectionDto {
+  @IsOptional()
   @IsString()
-  title!: string;
+  optionGroup?: string;
 
+  @IsOptional()
   @IsString()
-  content!: string;
+  optionLabel?: string;
 }
 
 class SpecialConsiderationDto {
@@ -71,15 +139,70 @@ class SpecialConsiderationDto {
 }
 
 export class CreateQuotationDto {
+  @IsOptional()
   @IsUUID()
-  clientId!: string;
+  clientId?: string;
+
+  @IsOptional()
+  @IsString()
+  clientName?: string;
+
+  @IsOptional()
+  @IsString()
+  contactName?: string;
 
   @IsOptional()
   @IsUUID()
   createdById?: string;
 
+  /** Autosave silencioso: persiste el borrador sin re-disparar el
+   * aprendizaje (LearnedRule/ClientPattern), que ya corrió con este mismo
+   * contenido en el guardado anterior. */
+  @IsOptional()
+  @IsBoolean()
+  skipLearning?: boolean;
+
   @IsString()
   title!: string;
+
+  @IsOptional()
+  @IsString()
+  coverTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  executiveSummary?: string;
+
+  @IsOptional()
+  @IsString()
+  serviceType?: string;
+
+  @IsOptional()
+  @IsString()
+  templateType?: string;
+
+  @IsOptional()
+  @IsString()
+  pricingRule?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  partCount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  finalChargeRate?: number;
+
+  @IsOptional()
+  @IsNumber()
+  validityDays?: number;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  reusableBlockIds?: string[];
 
   @IsOptional()
   @IsString()
@@ -122,6 +245,40 @@ export class CreateQuotationDto {
 export class UpdateQuotationCommercialDto {
   @IsOptional()
   @IsString()
+  executiveSummary?: string;
+
+  @IsOptional()
+  @IsString()
+  coverTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  serviceType?: string;
+
+  @IsOptional()
+  @IsString()
+  templateType?: string;
+
+  @IsOptional()
+  @IsString()
+  pricingRule?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  partCount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  finalChargeRate?: number;
+
+  @IsOptional()
+  @IsNumber()
+  validityDays?: number;
+
+  @IsOptional()
+  @IsString()
   durationOfWork?: string;
 
   @IsOptional()
@@ -148,11 +305,49 @@ export class UpdateQuotationDto {
 
   @IsOptional()
   @IsString()
+  contactName?: string;
+
+  @IsOptional()
+  @IsString()
   title?: string;
 
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  coverTitle?: string;
+
+  @IsOptional()
+  @IsString()
+  executiveSummary?: string;
+
+  @IsOptional()
+  @IsString()
+  serviceType?: string;
+
+  @IsOptional()
+  @IsString()
+  templateType?: string;
+
+  @IsOptional()
+  @IsString()
+  pricingRule?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  partCount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  finalChargeRate?: number;
+
+  @IsOptional()
+  @IsNumber()
+  validityDays?: number;
 }
 
 export class UpdateQuotationTemplateDto {
@@ -160,6 +355,94 @@ export class UpdateQuotationTemplateDto {
   @ValidateNested({ each: true })
   @Type(() => CommercialSectionDto)
   sections!: CommercialSectionDto[];
+}
+
+export class CreateServiceCatalogDto {
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  templateType?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ServiceCatalogItemDto)
+  items!: ServiceCatalogItemDto[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  activityNames?: string[];
+}
+
+export class UpdateServiceCatalogDto {
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  templateType?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ServiceCatalogItemDto)
+  items!: ServiceCatalogItemDto[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  activityNames?: string[];
+}
+
+export class CreateWorkItemCatalogDto {
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  unitPrice?: number;
+}
+
+export class UpdateWorkItemCatalogDto {
+  @IsString()
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  code?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  unitPrice?: number;
+}
+
+export class CreateReusableTextBlockDto {
+  @IsString()
+  name!: string;
+
+  @IsString()
+  type!: string;
+
+  @IsString()
+  content!: string;
+}
+
+export class UpdateReusableTextBlockDto {
+  @IsString()
+  name!: string;
+
+  @IsString()
+  type!: string;
+
+  @IsString()
+  content!: string;
 }
 
 export class CreateQuotationActivityDto {

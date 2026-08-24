@@ -27,6 +27,11 @@ export class CatalogController {
     return this.catalogService.listCatalog();
   }
 
+  @Get('detected-services')
+  listDetectedServices() {
+    return this.catalogService.listDetectedServices();
+  }
+
   @Post('categories')
   @Roles('ADMIN', 'SALES')
   createCategory(@Body() body: CreateCategoryDto) {
@@ -67,6 +72,15 @@ export class CatalogController {
       serviceId,
       profiles: body.profiles,
     });
+  }
+
+  @Patch('detected-services/:id/status')
+  @Roles('ADMIN', 'SALES')
+  updateDetectedServiceStatus(
+    @Param('id') id: string,
+    @Body() body: { status: 'PENDING' | 'APPROVED' | 'DISMISSED' },
+  ) {
+    return this.catalogService.updateDetectedServiceStatus(id, body.status);
   }
 
   @Get('exchange-rate')

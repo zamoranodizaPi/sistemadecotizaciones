@@ -16,13 +16,25 @@ enum UserRole {
 }
 
 enum QuotationStatus {
+  BORRADOR
   NUEVA
   EN_PROCESO
   ENVIADA
+  VISTA
+  NEGOCIACION
   ACEPTADA
+  RECHAZADA
+  VENCIDA
   EJECUTADA
   CUENTAS_POR_COBRAR
   PAGADA
+}
+
+enum ApprovalStatus {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum ActivityType {
@@ -50,6 +62,7 @@ model User {
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
   quotations   Quotation[]       @relation("QuotationOwner")
+  approvedQuotations Quotation[] @relation("QuotationApprover")
   history      QuotationHistory[]
   activities   Activity[]
 }
@@ -91,12 +104,12 @@ model Category {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
-  services    Service[]
+  supplies    Supply[]
 
   @@index([deletedAt])
 }
 
-model Service {
+model Supply {
   id          String         @id @default(uuid())
   categoryId  String
   code        String         @unique
@@ -108,29 +121,31 @@ model Service {
   updatedAt   DateTime       @updatedAt
   deletedAt   DateTime?
   category    Category       @relation(fields: [categoryId], references: [id])
-  prices      ServicePrice[]
-  pricingProfiles ServicePricingProfile[]
+  prices      SupplyPrice[]
+  pricingProfiles SupplyPricingProfile[]
   items       QuotationItem[]
 
   @@index([categoryId, deletedAt])
+  @@map("Service")
 }
 
-model ServicePrice {
+model SupplyPrice {
   id         String    @id @default(uuid())
-  serviceId  String
+  supplyId   String    @map("serviceId")
   price      Decimal   @db.Decimal(12, 2)
   validFrom  DateTime
   validTo    DateTime?
   source     String
   createdAt  DateTime  @default(now())
-  service    Service   @relation(fields: [serviceId], references: [id])
+  supply     Supply    @relation(fields: [supplyId], references: [id])
 
-  @@index([serviceId, validFrom, validTo])
+  @@index([supplyId, validFrom, validTo])
+  @@map("ServicePrice")
 }
 
-model ServicePricingProfile {
+model SupplyPricingProfile {
   id             String       @id @default(uuid())
-  serviceId      String
+  supplyId       String       @map("serviceId")
   code           String
   name           String
   sortOrder      Int          @default(0)
@@ -138,15 +153,16 @@ model ServicePricingProfile {
   usdPrice       Decimal?     @db.Decimal(12, 2)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
-  service        Service      @relation(fields: [serviceId], references: [id])
+  supply         Supply       @relation(fields: [supplyId], references: [id])
   quotationItems QuotationItem[]
-  versions       ServicePricingProfileVersion[]
+  versions       SupplyPricingProfileVersion[]
 
-  @@unique([serviceId, code, name])
-  @@index([serviceId])
+  @@unique([supplyId, code, name])
+  @@index([supplyId])
+  @@map("ServicePricingProfile")
 }
 
-model ServicePricingProfileVersion {
+model SupplyPricingProfileVersion {
   id               String                @id @default(uuid())
   pricingProfileId String
   mxnPrice         Decimal?              @db.Decimal(12, 2)
@@ -155,10 +171,11 @@ model ServicePricingProfileVersion {
   validTo          DateTime?
   source           String
   createdAt        DateTime              @default(now())
-  pricingProfile   ServicePricingProfile @relation(fields: [pricingProfileId], references: [id])
+  pricingProfile   SupplyPricingProfile  @relation(fields: [pricingProfileId], references: [id])
 
   @@unique([pricingProfileId, validFrom])
   @@index([pricingProfileId, validFrom, validTo])
+  @@map("ServicePricingProfileVersion")
 }
 
 model ExchangeRateSetting {
@@ -175,22 +192,46 @@ model ExchangeRateSetting {
   @@unique([baseCurrency, quoteCurrency])
 }
 
+model CompanyProfile {
+  id                    String   @id @default(uuid())
+  legalName             String
+  commercialName        String?
+  brandShortName        String?
+  tagline               String?
+  logoUrl               String?
+  rfc                   String?
+  email                 String?
+  phone                 String?
+  website               String?
+  address               String?
+  city                  String?
+  state                 String?
+  country               String?  @default("MX")
+  defaultDurationOfWork String?
+  defaultTerms          String?
+  updatedAt             DateTime @updatedAt
+  createdAt             DateTime @default(now())
+}
+
 model Client {
   id          String      @id @default(uuid())
   legalName   String
   commercialName String?
-  rfc         String      @unique
+  rfc         String?     @unique
   address     String?
   city        String?
   state       String?
   country     String?     @default("MX")
+  industry    String?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
   deletedAt   DateTime?
   contacts    Contact[]
   quotations  Quotation[]
+  pattern     ClientPattern?
 
   @@index([deletedAt])
+  @@index([industry])
 }
 
 model Contact {
@@ -211,16 +252,41 @@ model Contact {
 model Quotation {
   id               String             @id @default(uuid())
   folio            String             @unique
+  rootQuotationId  String?
+  previousVersionId String?
   clientId         String
+  contactName      String?
   pipelineId       String?
   stageId          String?
-  status           QuotationStatus    @default(NUEVA)
+  status           QuotationStatus    @default(BORRADOR)
+  serviceType      String?
+  templateType     String?
+  coverTitle       String?
+  executiveSummary String?
+  versionNumber    Int                @default(1)
+  validUntil       DateTime?
+  sentAt           DateTime?
+  viewedAt         DateTime?
+  acceptedAt       DateTime?
+  rejectedAt       DateTime?
+  convertedToWorkOrderAt DateTime?
+  workOrderNumber  String?
+  pricingRule      String?
+  pricingRuleLabel String?
+  partCount        Int                @default(1)
+  discountPercent  Decimal?           @db.Decimal(8, 4)
+  requiresApproval Boolean            @default(false)
+  approvalStatus   ApprovalStatus     @default(NOT_REQUIRED)
+  approvalReason   String?
+  approvalResolvedAt DateTime?
+  approvedById     String?
   title            String
   notes            String?
   durationOfWork   String?
   termsAndConditions String?
   commercialSections Json?
   subtotal         Decimal            @db.Decimal(12, 2)
+  finalChargeRate  Decimal            @default(16) @db.Decimal(8, 4)
   tax              Decimal            @db.Decimal(12, 2)
   total            Decimal            @db.Decimal(12, 2)
   currency         String             @default("MXN")
@@ -229,10 +295,16 @@ model Quotation {
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
   deletedAt        DateTime?
+  learnedAt        DateTime?
   client           Client             @relation(fields: [clientId], references: [id])
   pipeline         Pipeline?          @relation(fields: [pipelineId], references: [id])
   stage            DealStage?         @relation(fields: [stageId], references: [id])
   createdBy        User               @relation("QuotationOwner", fields: [createdById], references: [id])
+  approvedBy       User?              @relation("QuotationApprover", fields: [approvedById], references: [id])
+  rootQuotation    Quotation?         @relation("QuotationRoot", fields: [rootQuotationId], references: [id])
+  previousVersion  Quotation?         @relation("QuotationVersion", fields: [previousVersionId], references: [id])
+  versions         Quotation[]        @relation("QuotationRoot")
+  nextVersions     Quotation[]        @relation("QuotationVersion")
   items            QuotationItem[]
   specialConsiderations QuotationSpecialConsideration[]
   history          QuotationHistory[]
@@ -284,9 +356,10 @@ model QuotationTemplateSetting {
   updatedAt    DateTime @updatedAt
 }
 
-model ServiceTemplate {
+model ServiceCatalog {
   id                    String   @id @default(uuid())
   name                  String   @unique
+  templateType          String?
   items                 Json
   commercialSections    Json?
   specialConsiderations Json?
@@ -295,27 +368,50 @@ model ServiceTemplate {
   deletedAt             DateTime?
 
   @@index([deletedAt])
+  @@map("ServiceTemplate")
 }
 
-model WorkItemCatalog {
+model ActivityCatalog {
   id        String   @id @default(uuid())
   name      String   @unique
+  code      String?  @unique
+  unitPrice Decimal? @db.Decimal(12, 2)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   deletedAt DateTime?
 
   @@index([deletedAt])
+  @@map("WorkItemCatalog")
+}
+
+model ReusableTextBlock {
+  id        String   @id @default(uuid())
+  name      String
+  type      String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  @@unique([name, type])
+  @@index([type, deletedAt])
 }
 
 model QuotationItem {
   id                String    @id @default(uuid())
   quotationId       String
-  serviceId         String?
+  supplyId          String?   @map("serviceId")
   pricingProfileId  String?
-  serviceCode       String
-  serviceName       String
+  supplyCode        String    @map("serviceCode")
+  supplyName        String    @map("serviceName")
   categoryName      String
   pricingProfileName String?
+  partNumber        Int       @default(1)
+  partQuantity      Int       @default(1)
+  activityDays      Int       @default(1)
+  isOptional        Boolean   @default(false)
+  optionGroup       String?
+  optionLabel       String?
   quantity          Decimal   @db.Decimal(12, 2)
   unitPrice         Decimal   @db.Decimal(12, 2)
   totalPrice        Decimal   @db.Decimal(12, 2)
@@ -323,8 +419,8 @@ model QuotationItem {
   priceOriginCurrency String?
   priceVersionId    String?
   quotation         Quotation @relation(fields: [quotationId], references: [id])
-  service           Service?  @relation(fields: [serviceId], references: [id])
-  pricingProfile    ServicePricingProfile? @relation(fields: [pricingProfileId], references: [id])
+  supply            Supply?   @relation(fields: [supplyId], references: [id])
+  pricingProfile    SupplyPricingProfile? @relation(fields: [pricingProfileId], references: [id])
 
   @@index([quotationId])
 }
@@ -356,4 +452,193 @@ model Activity {
   user         User?        @relation(fields: [userId], references: [id])
 
   @@index([quotationId, createdAt])
+}
+
+model ClientPattern {
+  id                String    @id @default(uuid())
+  clientId          String    @unique
+  industry          String?
+  quotationCount    Int       @default(0)
+  frequentServices  Json
+  frequentWorkItems Json
+  travelLocations   Json
+  avgTotal          Decimal?  @db.Decimal(12, 2)
+  lastQuotationAt   DateTime?
+  updatedAt         DateTime  @updatedAt
+  client            Client    @relation(fields: [clientId], references: [id])
+
+  @@index([industry])
+}
+
+model IndustryPattern {
+  id                String   @id @default(uuid())
+  industry          String   @unique
+  clientCount       Int      @default(0)
+  quotationCount    Int      @default(0)
+  frequentServices  Json
+  frequentWorkItems Json
+  updatedAt         DateTime @updatedAt
+}
+
+model LearnedRule {
+  id                String   @id @default(uuid())
+  mode              String   @default("CATALOG_MATCH")
+  inputText         String
+  normalizedInput   String
+  detectedCategory  String?
+  detectedService   String?
+  variables         Json
+  suggestedServices Json
+  suggestedWorkItems Json
+  rejectedServices  Json
+  rejectedWorkItems Json
+  confidence        Float
+  usageCount        Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([mode, detectedCategory])
+  @@index([mode, detectedService])
+  @@index([usageCount, createdAt])
+  @@unique([mode, normalizedInput])
+}
+
+model AiFeedback {
+  id                  String   @id @default(uuid())
+  mode                String   @default("CATALOG_MATCH")
+  inputText           String
+  normalizedInput     String
+  aiOutput            Json
+  userCorrectedOutput Json
+  createdAt           DateTime @default(now())
+
+  @@index([mode, normalizedInput, createdAt])
+}
+
+model AiLearningPrompt {
+  id            String   @id @default(uuid())
+  mode          String   @default("CATALOG_MATCH")
+  name          String
+  systemPrompt  String
+  inputExample  String?
+  outputExample String?
+  isActive      Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([mode, isActive, sortOrder, createdAt])
+}
+
+model DetectedCatalogService {
+  id                String   @id @default(uuid())
+  name              String
+  normalizedName    String   @unique
+  suggestedCategory String?
+  sourceInput       String?
+  confidence        Float    @default(0.7)
+  usageCount        Int      @default(1)
+  status            String   @default("PENDING")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([suggestedCategory, status])
+}
+
+model Proyecto {
+  id                String     @id @default(uuid())
+  nombre            String
+  cliente           String
+  sector            String
+  descripcion       String
+  complejidad       String     @map("nivelComplejidad")
+  zona              String     @default("urbano")
+  urgencia          String     @default("normal")
+  costoBaseMaterial Decimal?   @db.Decimal(12, 2)
+  costoManoObra     Decimal?   @db.Decimal(12, 2)
+  factorComplejidad Decimal?   @db.Decimal(8, 4)
+  factorZona        Decimal?   @db.Decimal(8, 4)
+  factorUrgencia    Decimal?   @db.Decimal(8, 4)
+  margen            Decimal?   @db.Decimal(8, 4)
+  totalFinal        Decimal?   @db.Decimal(12, 2)
+  createdAt         DateTime   @default(now())
+  soluciones        Solucion[]
+
+  @@index([sector, createdAt])
+  @@index([cliente, createdAt])
+}
+
+model Solucion {
+  id                    String       @id @default(uuid())
+  proyectoId            String
+  tipo                  String
+  incluyeIngenieria     Boolean      @default(false)
+  incluyeInstalacion    Boolean      @default(false)
+  incluyePuestaMarcha   Boolean      @default(false)
+  incluyeMantenimiento  Boolean      @default(false)
+  createdAt             DateTime     @default(now())
+  proyecto              Proyecto     @relation(fields: [proyectoId], references: [id])
+  componentes           Componente[]
+
+  @@index([proyectoId, tipo])
+}
+
+model Componente {
+  id         String    @id @default(uuid())
+  solucionId String
+  tipo       String
+  nombre     String
+  marca      String?
+  categoria  String
+  costoBase  Decimal   @db.Decimal(12, 2) @map("costo")
+  cantidad   Decimal   @db.Decimal(12, 2) @default(1)
+  createdAt  DateTime  @default(now())
+  solucion   Solucion  @relation(fields: [solucionId], references: [id])
+
+  @@index([solucionId, tipo])
+  @@index([categoria, marca])
+}
+
+model Material {
+  id        String   @id @default(uuid())
+  nombre    String
+  marca     String
+  categoria String
+  costoBase Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoria, marca])
+}
+
+model ManoObra {
+  id        String   @id @default(uuid())
+  tipo      String   @unique
+  costoHora Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model FactorCosto {
+  id        String   @id @default(uuid())
+  tipo      String
+  nombre    String
+  valor     Decimal  @db.Decimal(8, 4)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tipo, nombre])
+  @@index([tipo, nombre])
+}
+
+model TrainingExample {
+  id        String   @id @default(uuid())
+  input     Json
+  output    Json
+  embedding Float[]
+  aceptado  Boolean?
+  createdAt DateTime @default(now())
+
+  @@index([aceptado, createdAt])
 }

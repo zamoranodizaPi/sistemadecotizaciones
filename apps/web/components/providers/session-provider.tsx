@@ -8,8 +8,8 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import Image from 'next/image';
-import { useCurrentUser, useLogin } from '@/lib/api/hooks';
+import { useCompanyProfile, useCurrentUser, useLogin } from '@/lib/api/hooks';
+import { resolveCompanyBrandName, resolveCompanyLogo, resolveCompanyTagline } from '@/lib/company-brand';
 import type { AuthUser } from '@/lib/api/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -67,8 +67,12 @@ function persistSession(next: SessionState) {
 
 function LoginScreen() {
   const loginMutation = useLogin();
+  const companyProfileQuery = useCompanyProfile();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const brandName = resolveCompanyBrandName(companyProfileQuery.data);
+  const tagline = resolveCompanyTagline(companyProfileQuery.data);
+  const logoUrl = resolveCompanyLogo(companyProfileQuery.data);
 
   async function submit() {
     const response = await loginMutation.mutateAsync({
@@ -95,21 +99,18 @@ function LoginScreen() {
           <div className="flex justify-center">
             <div className="flex items-center gap-5 rounded-[28px] bg-white/80 px-3 py-2">
               <div className="flex h-[158px] w-[108px] items-center justify-center overflow-hidden">
-                <Image
-                  src="/brand/logo.png"
-                  alt="SIEZA"
-                  width={94}
-                  height={128}
+                <img
+                  src={logoUrl}
+                  alt={brandName}
                   className="h-[128px] w-[94px] object-contain"
-                  priority
                 />
               </div>
               <div className="text-left">
                 <p className="text-sm font-semibold uppercase tracking-[0.28em] text-[var(--color-secondary)]">
-                  SIEZA
+                  {brandName}
                 </p>
                 <p className="mt-1 text-[11px] font-medium uppercase tracking-[0.24em] text-[var(--color-primary)]">
-                  energy solutions
+                  {tagline}
                 </p>
                 <p className="mt-3 text-sm font-medium text-[var(--color-text-muted)]">
                   Sistema comercial de cotizaciones

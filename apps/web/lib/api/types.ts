@@ -1,11 +1,18 @@
 export type QuotationStatus =
+  | 'BORRADOR'
   | 'NUEVA'
   | 'EN_PROCESO'
   | 'ENVIADA'
+  | 'VISTA'
+  | 'NEGOCIACION'
   | 'ACEPTADA'
+  | 'RECHAZADA'
+  | 'VENCIDA'
   | 'EJECUTADA'
   | 'CUENTAS_POR_COBRAR'
   | 'PAGADA';
+
+export type ApprovalStatus = 'NOT_REQUIRED' | 'PENDING' | 'APPROVED' | 'REJECTED';
 
 export type DashboardMetricsResponse = {
   totalQuotations: number;
@@ -29,10 +36,6 @@ export type AuthUser = {
 export type LoginResponse = {
   accessToken: string;
   user: AuthUser;
-  bootstrapCredentials?: {
-    email: string;
-    password: string;
-  };
 };
 
 export type ActivityType =
@@ -49,7 +52,7 @@ export type CatalogResponse = Array<{
   name: string;
   code: string;
   description?: string | null;
-  services: Array<{
+  supplies: Array<{
     id: string;
     code: string;
     name: string;
@@ -74,6 +77,18 @@ export type CatalogResponse = Array<{
   }>;
 }>;
 
+export type DetectedCatalogServiceResponse = Array<{
+  id: string;
+  name: string;
+  suggestedCategory: string | null;
+  sourceInput: string | null;
+  confidence: number;
+  usageCount: number;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}>;
+
 export type ExchangeRateResponse = {
   id: string;
   baseCurrency: string;
@@ -85,12 +100,52 @@ export type ExchangeRateResponse = {
   updatedAt: string;
 };
 
+export type CompanyProfileResponse = {
+  id: string;
+  legalName: string;
+  commercialName: string | null;
+  brandShortName: string | null;
+  tagline: string | null;
+  logoUrl: string | null;
+  rfc: string | null;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  defaultDurationOfWork: string | null;
+  defaultTerms: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ClientInsightsResponse = {
+  source: 'client' | 'industry';
+  industry?: string;
+  quotationCount: number;
+  frequentServices: Array<{ name: string; count: number }>;
+  frequentWorkItems: Array<{ name: string; count: number }>;
+  travelLocations: Array<{ name: string; count: number }>;
+  avgTotal: number | null;
+} | null;
+
+export type AiLearningHealthResponse = {
+  totalRules: number;
+  totalRuleUsage: number;
+  feedbackCount: number;
+  quotationsLearnedFrom: number;
+  totalQuotations: number;
+};
+
 export type ClientResponse = Array<{
   id: string;
   legalName: string;
   commercialName: string | null;
-  rfc: string;
+  rfc: string | null;
   address?: string | null;
+  industry?: string | null;
   contacts: Array<{
     id: string;
     fullName: string;
@@ -112,8 +167,32 @@ export type ClientResponse = Array<{
 export type QuotationListResponse = Array<{
   id: string;
   folio: string;
+  rootQuotationId?: string | null;
+  previousVersionId?: string | null;
+  serviceType?: string | null;
+  templateType?: string | null;
+  coverTitle?: string | null;
+  executiveSummary?: string | null;
+  versionNumber: number;
+  validUntil?: string | null;
+  sentAt?: string | null;
+  viewedAt?: string | null;
+  acceptedAt?: string | null;
+  rejectedAt?: string | null;
+  convertedToWorkOrderAt?: string | null;
+  workOrderNumber?: string | null;
+  pricingRule?: string | null;
+  pricingRuleLabel?: string | null;
+  contactName?: string | null;
+  partCount?: number | null;
+  finalChargeRate?: string | number | null;
+  discountPercent?: string | number | null;
+  requiresApproval?: boolean;
+  approvalStatus?: ApprovalStatus;
+  approvalReason?: string | null;
   title: string;
   status: QuotationStatus;
+  subtotal?: string | number;
   total: string | number;
   currency: string;
   createdAt: string;
@@ -152,6 +231,12 @@ export type QuotationListResponse = Array<{
     email: string;
     role: string;
   };
+  approvedBy?: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+  } | null;
   activities?: Array<{
     id: string;
     type: ActivityType;
@@ -160,12 +245,18 @@ export type QuotationListResponse = Array<{
   }>;
   items: Array<{
     id: string;
-    serviceId: string | null;
+    supplyId: string | null;
     pricingProfileId?: string | null;
-    serviceCode: string;
-    serviceName: string;
+    supplyCode: string;
+    supplyName: string;
     categoryName: string;
     pricingProfileName?: string | null;
+    partNumber?: number | null;
+    partQuantity?: number | null;
+    activityDays?: number | null;
+    isOptional?: boolean;
+    optionGroup?: string | null;
+    optionLabel?: string | null;
     exchangeRateUsed?: string | number | null;
     priceOriginCurrency?: string | null;
     quantity: string | number;
@@ -278,11 +369,22 @@ export type SpecialConsiderationCatalogResponse = Array<{
 export type ServiceTemplateResponse = Array<{
   id: string;
   name: string;
+  templateType?: string | null;
   items: Array<{
-    serviceId: string;
-    pricingProfileId: string;
+    serviceId?: string;
+    pricingProfileId?: string;
+    code?: string;
+    name?: string;
+    categoryName?: string;
+    pricingProfileName?: string;
+    partNumber?: number;
+    partQuantity?: number;
+    activityDays?: number;
     quantity: number;
     unitPriceOverride?: number;
+    isOptional?: boolean;
+    optionGroup?: string;
+    optionLabel?: string;
   }>;
   commercialSections?: Array<{
     title: string;
@@ -308,6 +410,197 @@ export type WorkItemCatalogResponse = Array<{
   createdAt: string;
   updatedAt: string;
 }>;
+
+export type WorkItemCatalogEntry = WorkItemCatalogResponse[number];
+
+export type QuotationLearningResponse = {
+  learned: boolean;
+};
+
+export type ReusableTextBlockResponse = Array<{
+  id: string;
+  name: string;
+  type: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}>;
+
+export type AiSuggestedQuoteResponse = {
+  mode: 'CATALOG_MATCH' | 'STRUCTURED_JSON';
+  engine: 'openai' | 'anthropic' | 'rules' | 'local_learning';
+  ai_status:
+    | 'openai_ok'
+    | 'anthropic_ok'
+    | 'fallback_no_key'
+    | 'fallback_insufficient_quota'
+    | 'fallback_provider_error'
+    | 'local_rule_match';
+  detected: {
+    category: string | null;
+    service: string | null;
+    variables: Record<string, string | number>;
+  };
+  suggested_items: Array<{
+    serviceId?: string | null;
+    pricingProfileId?: string | null;
+    service: string;
+    model?: string | null;
+    quantity: number;
+    unit_price: number;
+    total: number;
+  }>;
+  suggested_work_items: string[];
+  suggested_commercial_text: string;
+  structured_output: Record<string, unknown> | null;
+  historical_references: Array<{
+    id: string;
+    folio: string;
+    title: string;
+    client: string;
+    similarity: number;
+  }>;
+  confidence: number;
+  catalog_updates: {
+    pending_count: number;
+    detected_pending: string[];
+  };
+  missing_fields: string[];
+  needs_review: boolean;
+  rules_applied: string[];
+  applied_rule?: {
+    id: string;
+    category?: string | null;
+    service?: string | null;
+  } | null;
+};
+
+export type AiFeedbackResponse = {
+  saved: boolean;
+  mode?: 'CATALOG_MATCH' | 'STRUCTURED_JSON';
+  ai_status: 'feedback_learned';
+  normalized_input: string;
+};
+
+export type AiCreateDealResponse = {
+  quotationId: string;
+  folio: string;
+  title: string;
+  status: QuotationStatus;
+  suggestion: AiSuggestedQuoteResponse;
+};
+
+export type AiLearningPromptResponse = Array<{
+  id: string;
+  mode: 'CATALOG_MATCH' | 'STRUCTURED_JSON';
+  name: string;
+  systemPrompt: string;
+  inputExample: string | null;
+  outputExample: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}>;
+
+export type AiLearningTrainingResponse = Array<{
+  id: string;
+  input: Record<string, unknown>;
+  output: Record<string, unknown>;
+  aceptado?: boolean | null;
+  createdAt: string;
+}>;
+
+export type AiLearningDatasetResponse = {
+  trainingDataset: Array<{
+    input: Record<string, unknown>;
+    output: Record<string, unknown>;
+    aceptado?: boolean;
+  }>;
+};
+
+export type AiProyectoResponse = {
+  engine: 'openai' | 'rules';
+  input: {
+    nombre: string;
+    cliente: string;
+    sector: string;
+    descripcion: string;
+    nivelComplejidad: string;
+    condiciones: {
+      complejidad: string;
+      zona: string;
+      urgencia: string;
+      margen?: number;
+    };
+  };
+  similares: Array<{
+    id: string;
+    score: number;
+    aceptado: boolean | null;
+    costSignals?: string[];
+    costInfluence?: number;
+  }>;
+  proyecto: {
+    id: string;
+    nombre: string;
+    cliente: string;
+    sector: string;
+    descripcion: string;
+    complejidad: string;
+    zona: string;
+    urgencia: string;
+    costoBaseMaterial?: string | number | null;
+    costoManoObra?: string | number | null;
+    factorComplejidad?: string | number | null;
+    factorZona?: string | number | null;
+    factorUrgencia?: string | number | null;
+    margen?: string | number | null;
+    totalFinal?: string | number | null;
+    createdAt: string;
+    soluciones: Array<{
+      id: string;
+      tipo: string;
+      incluyeIngenieria: boolean;
+      incluyeInstalacion: boolean;
+      incluyePuestaMarcha: boolean;
+      incluyeMantenimiento: boolean;
+      createdAt: string;
+      componentes: Array<{
+        id: string;
+        tipo: string;
+        nombre: string;
+        marca: string | null;
+        categoria: string;
+        costoBase: string | number;
+        cantidad: string | number;
+        createdAt: string;
+      }>;
+    }>;
+  };
+  costos: {
+    costo_base: number;
+    materiales: number;
+    mano_obra: number;
+    factores: {
+      complejidad: number;
+      zona: number;
+      urgencia: number;
+    };
+    margen: number;
+    total_final: number;
+  };
+  trainingExampleId: string;
+};
+
+export type AiProyectoConvertResponse = {
+  proyectoId: string;
+  quotationId: string;
+  folio: string;
+  title: string;
+  matchedItems: number;
+  unmatchedComponents: string[];
+};
 
 export type AssignableUserResponse = AuthUser[];
 
@@ -350,7 +643,58 @@ export type ImportConfirmResponse = {
   }>;
 };
 
+export type ClientImportPreviewResponse = {
+  source?: string;
+  total: number;
+  rows: Array<{
+    nombreEmpresa: string;
+    contactoPrincipal: string;
+    puestoContacto?: string;
+    direccionCompleta?: string;
+    ciudad?: string;
+    estado?: string;
+    pais?: string;
+    telefono?: string;
+    correoElectronico?: string;
+    rfc: string;
+    sector?: string;
+  }>;
+};
+
+export type ClientImportConfirmResponse = {
+  processed: number;
+  logs: Array<{
+    companyName: string;
+    rfc: string;
+    contact: string;
+    sector?: string | null;
+    action: string;
+    source?: string;
+  }>;
+};
+
+export type ActivityImportPreviewResponse = {
+  source?: string;
+  total: number;
+  rows: Array<{
+    name: string;
+  }>;
+};
+
+export type ActivityImportConfirmResponse = {
+  processed: number;
+  logs: Array<{
+    activityName: string;
+    action: string;
+    source?: string;
+  }>;
+};
+
 export type ExportCatalogResponse = {
   fileName: string;
   file: string;
 };
+
+export type ExportClientsResponse = ExportCatalogResponse;
+export type ExportActivitiesResponse = ExportCatalogResponse;
+export type ExportCombinedTemplateResponse = ExportCatalogResponse;

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards, ValidationPipe } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, UseGuards, ValidationPipe } from '@nestjs/common';
 import {
   IsArray,
   IsBase64,
@@ -20,6 +20,10 @@ class ImportExcelDto {
   @IsOptional()
   @IsString()
   source?: string;
+
+  @IsOptional()
+  @IsString()
+  sheetName?: string;
 }
 
 class ImportOptionDto {
@@ -94,6 +98,76 @@ class ConfirmImportDto {
   rows!: ImportPreviewRowDto[];
 }
 
+class ClientImportPreviewRowDto {
+  @IsString()
+  nombreEmpresa!: string;
+
+  @IsString()
+  contactoPrincipal!: string;
+
+  @IsOptional()
+  @IsString()
+  puestoContacto?: string;
+
+  @IsOptional()
+  @IsString()
+  direccionCompleta?: string;
+
+  @IsOptional()
+  @IsString()
+  ciudad?: string;
+
+  @IsOptional()
+  @IsString()
+  estado?: string;
+
+  @IsOptional()
+  @IsString()
+  pais?: string;
+
+  @IsOptional()
+  @IsString()
+  telefono?: string;
+
+  @IsOptional()
+  @IsString()
+  correoElectronico?: string;
+
+  @IsString()
+  rfc!: string;
+
+  @IsOptional()
+  @IsString()
+  sector?: string;
+}
+
+class ConfirmClientImportDto {
+  @IsOptional()
+  @IsString()
+  source?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ClientImportPreviewRowDto)
+  rows!: ClientImportPreviewRowDto[];
+}
+
+class ActivityImportPreviewRowDto {
+  @IsString()
+  name!: string;
+}
+
+class ConfirmActivityImportDto {
+  @IsOptional()
+  @IsString()
+  source?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ActivityImportPreviewRowDto)
+  rows!: ActivityImportPreviewRowDto[];
+}
+
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('imports')
 export class ImportController {
@@ -128,9 +202,69 @@ export class ImportController {
     );
   }
 
+  @Post('clients/preview')
+  @Roles('ADMIN', 'SALES')
+  async previewClients(@Body() body: ImportExcelDto) {
+    const buffer = Buffer.from(body.file, 'base64');
+    return this.importService.previewClients(buffer, body.source, body.sheetName);
+  }
+
+  @Post('clients/confirm')
+  @Roles('ADMIN', 'SALES')
+  async confirmClientsImport(
+    @Body(new ValidationPipe({ transform: true })) body: ConfirmClientImportDto,
+  ) {
+    return this.importService.importParsedClients(body.rows, body.source);
+  }
+
+  @Post('activities/preview')
+  @Roles('ADMIN', 'SALES')
+  async previewActivities(@Body() body: ImportExcelDto) {
+    const buffer = Buffer.from(body.file, 'base64');
+    return this.importService.previewActivities(buffer, body.source, body.sheetName);
+  }
+
+  @Post('activities/confirm')
+  @Roles('ADMIN', 'SALES')
+  async confirmActivitiesImport(
+    @Body(new ValidationPipe({ transform: true })) body: ConfirmActivityImportDto,
+  ) {
+    return this.importService.importParsedActivities(body.rows, body.source);
+  }
+
   @Get('excel/export')
   @Roles('ADMIN', 'SALES')
   exportExcelTemplate() {
     return this.importService.exportCurrentCatalog();
+  }
+
+  @Get('clients/export')
+  @Roles('ADMIN', 'SALES')
+  exportClientTemplate() {
+    return this.importService.exportClientTemplate();
+  }
+
+  @Get('activities/export')
+  @Roles('ADMIN', 'SALES')
+  exportActivityTemplate() {
+    return this.importService.exportActivityTemplate();
+  }
+
+  @Get('clients/export/data')
+  @Roles('ADMIN', 'SALES')
+  exportClientsData(@Query('sector') sector?: string, @Query('city') city?: string) {
+    return this.importService.exportClientsData({ sector, city });
+  }
+
+  @Get('activities/export/data')
+  @Roles('ADMIN', 'SALES')
+  exportActivitiesData(@Query('q') query?: string) {
+    return this.importService.exportActivitiesData({ query });
+  }
+
+  @Get('template/combinada')
+  @Roles('ADMIN', 'SALES')
+  exportCombinedTemplate() {
+    return this.importService.exportCombinedTemplate();
   }
 }

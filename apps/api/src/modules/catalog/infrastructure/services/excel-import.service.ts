@@ -433,6 +433,8 @@ export class ExcelImportService {
         });
       }
 
+      await this.catalogService.syncActivityCatalogToConceptCategory();
+
       return {
         processed: logs.length,
         logs,

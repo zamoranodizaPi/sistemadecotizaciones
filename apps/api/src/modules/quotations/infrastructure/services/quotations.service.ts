@@ -1,6 +1,4 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { appendFile, mkdir } from 'fs/promises';
-import { dirname, resolve } from 'path';
 import {
   ActivityType,
   ApprovalStatus,
@@ -19,6 +17,7 @@ type QuotationWithRelations = Quotation & {
 import { PrismaService } from '../../../../shared/infrastructure/prisma.service';
 import { CatalogService } from '../../../catalog/infrastructure/services/catalog.service';
 import { AiLearningService } from '../../../ai-learning/infrastructure/services/ai-learning.service';
+import { AiLearningLogService } from '../../../ai-learning/infrastructure/services/ai-learning-log.service';
 import {
   CreateServiceCatalogDto,
   CreateReusableTextBlockDto,
@@ -45,6 +44,7 @@ export class QuotationsService {
     private readonly pdfService: PdfService,
     private readonly pipelineService: PipelineService,
     private readonly aiLearningService: AiLearningService,
+    private readonly aiLearningLogService: AiLearningLogService,
     private readonly companyProfileService: CompanyProfileService,
     private readonly reporteWordService: ReporteWordService,
   ) {}
@@ -277,7 +277,6 @@ export class QuotationsService {
   }
 
   async listWorkItemCatalog() {
-    await this.catalogService.syncActivityCatalogToConceptCategory();
     return this.prisma.activityCatalog.findMany({
       where: { deletedAt: null },
       orderBy: { name: 'asc' },
@@ -1894,47 +1893,38 @@ export class QuotationsService {
     } | null,
     status: 'learned' | 'skipped_empty_input' | 'skipped_empty_services',
   ) {
-    try {
-      const filePath = resolve(process.cwd(), 'apps/api/storage/ai-learning/quotation-learning-log.jsonl');
-      await mkdir(dirname(filePath), { recursive: true });
-
-      const entry = {
-        loggedAt: new Date().toISOString(),
-        source: 'quotation',
-        status,
-        quotation: {
-          id: quotation.id,
-          folio: quotation.folio,
-          title: quotation.title,
-          serviceType: quotation.serviceType || null,
-          client: quotation.client?.legalName || null,
-          currency: quotation.currency,
-          subtotal: Number(quotation.subtotal),
-          total: Number(quotation.total),
-        },
-        input,
-        output:
-          output
-            ? {
-                id: output.id || null,
-                mode: output.mode || null,
-                normalizedInput: output.normalizedInput || null,
-                detectedCategory: output.detectedCategory || null,
-                detectedService: output.detectedService || null,
-                variables: output.variables ?? null,
-                suggestedServices: output.suggestedServices ?? null,
-                suggestedWorkItems: output.suggestedWorkItems ?? null,
-                confidence: typeof output.confidence === 'number' ? output.confidence : null,
-                createdAt: output.createdAt?.toISOString() || null,
-                updatedAt: output.updatedAt?.toISOString() || null,
-              }
-            : null,
-      };
-
-      await appendFile(filePath, `${JSON.stringify(entry)}\n`, 'utf8');
-    } catch (error) {
-      console.error('appendQuotationLearningLog failed:', error);
-    }
+    await this.aiLearningLogService.append('quotation-learning-log.jsonl', {
+      loggedAt: new Date().toISOString(),
+      source: 'quotation',
+      status,
+      quotation: {
+        id: quotation.id,
+        folio: quotation.folio,
+        title: quotation.title,
+        serviceType: quotation.serviceType || null,
+        client: quotation.client?.legalName || null,
+        currency: quotation.currency,
+        subtotal: Number(quotation.subtotal),
+        total: Number(quotation.total),
+      },
+      input,
+      output:
+        output
+          ? {
+              id: output.id || null,
+              mode: output.mode || null,
+              normalizedInput: output.normalizedInput || null,
+              detectedCategory: output.detectedCategory || null,
+              detectedService: output.detectedService || null,
+              variables: output.variables ?? null,
+              suggestedServices: output.suggestedServices ?? null,
+              suggestedWorkItems: output.suggestedWorkItems ?? null,
+              confidence: typeof output.confidence === 'number' ? output.confidence : null,
+              createdAt: output.createdAt?.toISOString() || null,
+              updatedAt: output.updatedAt?.toISOString() || null,
+            }
+          : null,
+    });
   }
 
   private extractWorkItemsFromSections(value: Prisma.JsonValue | null) {
@@ -2241,6 +2231,8 @@ export class QuotationsService {
         create: { name: row },
       });
     }
+
+    await this.catalogService.syncActivityCatalogToConceptCategory();
   }
 
   private normalizeWorkItemName(value: string) {

@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, InternalServerErrorException, Logger, 
 import { ConfigService } from '@nestjs/config';
 import { Prisma, type Proyecto, type Solucion, type TrainingExample } from '@prisma/client';
 import { PrismaService } from '../../../../shared/infrastructure/prisma.service';
+import { normalizeForMatching, tokenOverlapScore } from '../../../../shared/domain/text-similarity';
 import { PdfService } from '../../../quotations/infrastructure/services/pdf.service';
 import { QuotationsService } from '../../../quotations/infrastructure/services/quotations.service';
 import {
@@ -993,34 +994,11 @@ export class AiProyectosService {
   }
 
   private normalizeForMatch(value: string) {
-    return value
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    return normalizeForMatching(value);
   }
 
   private scoreMatch(component: string, candidate: string, brand: string) {
-    if (!component || !candidate) {
-      return 0;
-    }
-
-    if (candidate.includes(component) || component.includes(candidate)) {
-      return brand && candidate.includes(brand) ? 0.98 : 0.9;
-    }
-
-    const componentTokens = new Set(component.split(' ').filter((token) => token.length > 2));
-    const candidateTokens = new Set(candidate.split(' ').filter((token) => token.length > 2));
-    const overlap = [...componentTokens].filter((token) => candidateTokens.has(token)).length;
-    const baseScore = overlap / Math.max(componentTokens.size, 1);
-
-    if (brand && candidate.includes(brand)) {
-      return Math.min(1, baseScore + 0.2);
-    }
-
-    return baseScore;
+    return tokenOverlapScore(component, candidate, brand);
   }
 
   private formatPdfDate(value: Date) {

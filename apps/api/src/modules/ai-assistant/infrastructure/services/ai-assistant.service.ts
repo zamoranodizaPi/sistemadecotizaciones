@@ -1,10 +1,21 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { appendFile, mkdir } from 'fs/promises';
-import { dirname, resolve } from 'path';
 import { AiLearningService } from '../../../ai-learning/infrastructure/services/ai-learning.service';
+import { AiLearningLogService } from '../../../ai-learning/infrastructure/services/ai-learning-log.service';
 import { PrismaService } from '../../../../shared/infrastructure/prisma.service';
 import { QuotationsService } from '../../../quotations/infrastructure/services/quotations.service';
-import { AiService } from './ai.service';
+import { IntentParsingService } from './intent-parsing.service';
+import { jaccardSimilarity, stripAccents } from '../../../../shared/domain/text-similarity';
+import {
+  buildServiceFamilyKey,
+  containsMismatchedDomainTerms,
+  dedupeSuggestedItems,
+  expandSearchTerms,
+  extractKeywords,
+  isAdvancedHighComplexityService,
+  isSimpleScopeRequest,
+  rankServices,
+  serviceSeemsCompatibleWithIntent,
+} from './service-ranking.helper';
 import type { Quotation } from '@prisma/client';
 
 type AiSuggestionPayload = {
@@ -36,8 +47,9 @@ type AiSuggestionPayload = {
 export class AiAssistantService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly aiService: AiService,
+    private readonly aiService: IntentParsingService,
     private readonly aiLearningService: AiLearningService,
+    private readonly aiLearningLogService: AiLearningLogService,
     private readonly quotationsService: QuotationsService,
   ) {}
 
@@ -97,7 +109,7 @@ export class AiAssistantService {
           category: localMatch.category,
           service: localMatch.service,
           variables: localMatch.variables,
-          keywords: this.extractKeywords(input),
+          keywords: extractKeywords(input),
           qualifiers: [],
           confidence: localMatch.confidence,
           engine: 'local_learning' as const,
@@ -115,7 +127,7 @@ export class AiAssistantService {
       servicePriceLookup,
       parsed.engine === 'local_learning',
     );
-    const candidateServices = this.rankServices(
+    const candidateServices = rankServices(
       services,
       parsed,
       input,
@@ -447,98 +459,6 @@ export class AiAssistantService {
     };
   }
 
-  private rankServices(
-    services: Array<{
-      id: string;
-      code: string;
-      name: string;
-      description: string | null;
-      relatedWork: string | null;
-      category: { id: string; name: string; code: string };
-      pricingProfiles: Array<{
-        id: string;
-        name: string;
-        mxnPrice: unknown;
-        usdPrice: unknown;
-        versions?: Array<{ mxnPrice?: unknown; usdPrice?: unknown }>;
-      }>;
-    }>,
-    parsed: Awaited<ReturnType<AiService['parseQuoteIntent']>>,
-    input: string,
-    suggestedServiceHints: string[],
-  ) {
-    const normalizedInput = this.normalize(input);
-    const searchTerms = this.expandSearchTerms(parsed, input, suggestedServiceHints);
-    const isSimpleScope = this.isSimpleScopeRequest(normalizedInput);
-
-    return services
-      .map((service) => {
-        const haystack = this.normalize(
-          [service.code, service.name, service.description || '', service.relatedWork || '', service.category.name, service.category.code].join(' '),
-        );
-
-        let score = 0;
-
-        if (parsed.category && haystack.includes(this.normalize(parsed.category))) {
-          score += 4;
-        }
-
-        if (parsed.service && haystack.includes(this.normalize(parsed.service))) {
-          score += 5;
-        }
-
-        if (
-          suggestedServiceHints.some((hint) => haystack.includes(this.normalize(hint)))
-        ) {
-          score += 4.5;
-        }
-
-        const tokenMatches = searchTerms.filter((term) => haystack.includes(term)).length;
-        score += tokenMatches * 0.9;
-
-        for (const keyword of parsed.keywords) {
-          if (haystack.includes(this.normalize(keyword))) {
-            score += 1.2;
-          }
-        }
-
-        if (normalizedInput.includes('pruebas completas') && /prueba|config|reporte/.test(haystack)) {
-          score += 2;
-        }
-
-        if (
-          (normalizedInput.includes('minigear') || normalizedInput.includes('34.5')) &&
-          /minigear|switchgear|swbg|relevador|proteccion|tp|medidor|aislamiento|contacto|arco/.test(haystack)
-        ) {
-          score += 3;
-        }
-
-        if (
-          normalizedInput.includes('puesta en marcha') &&
-          /puesta|energizado|carga|vacio|operacion|inyeccion|disparo/.test(haystack)
-        ) {
-          score += 2.6;
-        }
-
-        if (isSimpleScope && this.isAdvancedHighComplexityService(haystack)) {
-          score -= 6;
-        }
-
-        if (parsed.service && !this.serviceSeemsCompatibleWithIntent(parsed.service, haystack, normalizedInput)) {
-          score -= 3.5;
-        }
-
-        if (this.containsMismatchedDomainTerms(normalizedInput, haystack)) {
-          score -= 2.8;
-        }
-
-        return { service, score };
-      })
-      .filter((entry) => entry.score > 1.8)
-      .sort((left, right) => right.score - left.score)
-      .slice(0, 8);
-  }
-
   private async buildSuggestedItems(
     rankedServices: Array<{
       service: {
@@ -570,7 +490,7 @@ export class AiAssistantService {
         unitPrice: unknown;
       }>;
     }>,
-    parsed: Awaited<ReturnType<AiService['parseQuoteIntent']>>,
+    parsed: Awaited<ReturnType<IntentParsingService['parseQuoteIntent']>>,
     input: string,
     suggestedServiceHints: string[],
     servicePriceLookup: Map<string, { serviceId: string; pricingProfileId?: string; price: number }>,
@@ -635,7 +555,7 @@ export class AiAssistantService {
     );
 
     return this.filterBillableSuggestedItems(
-      this.dedupeSuggestedItems([...baseItems, ...ruleExtras, ...historyExtras]).slice(0, 8),
+      dedupeSuggestedItems([...baseItems, ...ruleExtras, ...historyExtras]).slice(0, 8),
     );
   }
 
@@ -752,35 +672,35 @@ export class AiAssistantService {
       model: string;
     }>,
     input: string,
-    parsed: Awaited<ReturnType<AiService['parseQuoteIntent']>>,
+    parsed: Awaited<ReturnType<IntentParsingService['parseQuoteIntent']>>,
   ) {
     const normalizedInput = this.normalize(input);
-    const isSimpleScope = this.isSimpleScopeRequest(normalizedInput);
+    const isSimpleScope = isSimpleScopeRequest(normalizedInput);
 
     const filtered = items.filter((item) => {
       const haystack = this.normalize(item.service);
 
-      if (isSimpleScope && this.isAdvancedHighComplexityService(haystack)) {
+      if (isSimpleScope && isAdvancedHighComplexityService(haystack)) {
         return false;
       }
 
-      if (parsed.service && !this.serviceSeemsCompatibleWithIntent(parsed.service, haystack, normalizedInput)) {
+      if (parsed.service && !serviceSeemsCompatibleWithIntent(parsed.service, haystack, normalizedInput)) {
         return false;
       }
 
-      if (this.containsMismatchedDomainTerms(normalizedInput, haystack)) {
+      if (containsMismatchedDomainTerms(normalizedInput, haystack)) {
         return false;
       }
 
       return true;
     });
 
-    return filtered.length ? this.dedupeSuggestedItems(filtered) : this.dedupeSuggestedItems(items);
+    return filtered.length ? dedupeSuggestedItems(filtered) : dedupeSuggestedItems(items);
   }
 
   private async findSimilarQuotations(
     input: string,
-    parsed: Awaited<ReturnType<AiService['parseQuoteIntent']>>,
+    parsed: Awaited<ReturnType<IntentParsingService['parseQuoteIntent']>>,
   ) {
     const normalizedInput = this.normalize(input);
     const quotations = await this.prisma.quotation.findMany({
@@ -965,7 +885,7 @@ export class AiAssistantService {
   }
 
   private resolveMissingFields(
-    parsed: Awaited<ReturnType<AiService['parseQuoteIntent']>>,
+    parsed: Awaited<ReturnType<IntentParsingService['parseQuoteIntent']>>,
     suggestedItems: Array<{ service: string }>,
   ) {
     const missing: string[] = [];
@@ -1040,7 +960,7 @@ export class AiAssistantService {
         unitPrice: number | null;
       }>;
     }>,
-    parsed: Awaited<ReturnType<AiService['parseQuoteIntent']>>,
+    parsed: Awaited<ReturnType<IntentParsingService['parseQuoteIntent']>>,
     servicePriceLookup: Map<string, { serviceId: string; pricingProfileId?: string; price: number }>,
     preferExactHistoricalMatch = false,
   ) {
@@ -1064,7 +984,7 @@ export class AiAssistantService {
           };
         });
 
-      return this.filterBillableSuggestedItems(this.dedupeSuggestedItems(exactItems)).slice(0, 8);
+      return this.filterBillableSuggestedItems(dedupeSuggestedItems(exactItems)).slice(0, 8);
     }
 
     const summaries = similarQuotations
@@ -1216,10 +1136,6 @@ export class AiAssistantService {
     );
   }
 
-  private extractKeywords(value: string) {
-    return Array.from(new Set(this.normalize(value).split(/[^a-z0-9]+/).filter((token) => token.length > 2)));
-  }
-
   private splitWorkItems(content: string) {
     return this.splitStructuredActivities(content);
   }
@@ -1366,148 +1282,6 @@ export class AiAssistantService {
       normalized.includes('notas importantes') ||
       normalized.includes('precios y validez')
     );
-  }
-
-  private expandSearchTerms(
-    parsed: Awaited<ReturnType<AiService['parseQuoteIntent']>>,
-    input: string,
-    suggestedServiceHints: string[],
-  ) {
-    const normalizedInput = this.normalize(input);
-    const terms = new Set<string>([
-      ...this.extractKeywords(input),
-      ...parsed.keywords.map((keyword) => this.normalize(keyword)),
-      ...suggestedServiceHints.flatMap((hint) => this.extractKeywords(hint)),
-    ]);
-
-    if (parsed.category) {
-      terms.add(this.normalize(parsed.category));
-    }
-
-    if (parsed.service) {
-      this.extractKeywords(parsed.service).forEach((term) => terms.add(term));
-    }
-
-    if (normalizedInput.includes('pruebas completas')) {
-      ['prueba', 'pruebas', 'configuracion', 'reporte', 'reportes'].forEach((term) => terms.add(term));
-    }
-
-    if (normalizedInput.includes('tablero')) {
-      ['tablero', 'tableros', 'seccion', 'secciones'].forEach((term) => terms.add(term));
-    }
-
-    if (normalizedInput.includes('ccm')) {
-      ['ccm', 'motor', 'motores'].forEach((term) => terms.add(term));
-    }
-
-    if (normalizedInput.includes('minigear') || normalizedInput.includes('34.5')) {
-      [
-        'minigear',
-        'swbg',
-        'switchgear',
-        'media',
-        'tension',
-        'relevador',
-        'proteccion',
-        'aislamiento',
-        'contacto',
-        'medidor',
-        'arco',
-        'inyeccion',
-        'energizado',
-        'vacio',
-        'carga',
-      ].forEach((term) => terms.add(term));
-    }
-
-    if (normalizedInput.includes('puesta en marcha')) {
-      ['puesta', 'marcha', 'operacion', 'disparo', 'prueba', 'pruebas'].forEach((term) => terms.add(term));
-    }
-
-    return [...terms].filter((term) => term.length > 2);
-  }
-
-  private dedupeSuggestedItems<
-    T extends {
-      service: string;
-      serviceId: string | null;
-      pricingProfileId: string | null;
-    },
-  >(items: T[]) {
-    const selected: T[] = [];
-    const seenIds = new Set<string>();
-    const seenFamilies = new Set<string>();
-
-    for (const item of items) {
-      const idKey = item.serviceId || item.pricingProfileId || this.normalize(item.service);
-      const familyKey = this.buildServiceFamilyKey(item.service);
-
-      if (seenIds.has(idKey) || seenFamilies.has(familyKey)) {
-        continue;
-      }
-
-      seenIds.add(idKey);
-      seenFamilies.add(familyKey);
-      selected.push(item);
-    }
-
-    return selected;
-  }
-
-  private buildServiceFamilyKey(value: string) {
-    const normalized = this.normalize(value)
-      .replace(/\b(servicio|suministro|pruebas?|prueba|de|del|para|con|y|tablero|electrico|electrica|electricos|electrica|sistema)\b/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    return normalized || this.normalize(value);
-  }
-
-  private isSimpleScopeRequest(normalizedInput: string) {
-    return (
-      /\b(cambiar|cambio|reemplazo|reemplazar|sustitucion|sustituir|instalar|instalacion|poner)\b/.test(normalizedInput) &&
-      /\b(foco|focos|lampara|lamparas|luminaria|luminarias|contacto|contactos|apagador|apagadores|breaker|breakers|interruptor|interruptores)\b/.test(normalizedInput)
-    );
-  }
-
-  private isAdvancedHighComplexityService(haystack: string) {
-    return /\b(arco|sel751a|relevador|proteccion|tp|transformacion|inyeccion|subestacion|switchgear|swbg|minigear|media tension|disparo)\b/.test(
-      haystack,
-    );
-  }
-
-  private serviceSeemsCompatibleWithIntent(parsedService: string, haystack: string, normalizedInput: string) {
-    const normalizedService = this.normalize(parsedService);
-
-    if (/\b(mantenimiento|revision|limpieza)\b/.test(normalizedService)) {
-      return /\b(mantenimiento|revision|limpieza|inspeccion|apriete)\b/.test(haystack);
-    }
-
-    if (/\b(cambio|reemplazo|sustitucion)\b/.test(normalizedInput)) {
-      return /\b(cambio|reemplazo|sustitucion|instalacion)\b/.test(haystack);
-    }
-
-    if (normalizedService.includes('puesta en marcha')) {
-      return /\b(puesta|energizado|operacion|prueba|disparo|carga|vacio)\b/.test(haystack);
-    }
-
-    if (normalizedService.includes('pruebas')) {
-      return /\b(prueba|pruebas|aislamiento|continuidad|operacion|contacto)\b/.test(haystack);
-    }
-
-    return true;
-  }
-
-  private containsMismatchedDomainTerms(normalizedInput: string, haystack: string) {
-    if (/\b(foco|focos|lampara|lamparas|luminaria|luminarias)\b/.test(normalizedInput)) {
-      return /\b(arco|relevador|tp|sel751a|subestacion|switchgear|swbg|minigear)\b/.test(haystack);
-    }
-
-    if (/\b(contacto|contactos|apagador|apagadores)\b/.test(normalizedInput)) {
-      return /\b(arco|tp|sel751a|switchgear|subestacion|minigear)\b/.test(haystack);
-    }
-
-    return false;
   }
 
   private async syncDetectedCatalogServices(
@@ -1744,19 +1518,11 @@ export class AiAssistantService {
   }
 
   private normalize(value: string) {
-    return value
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .trim();
+    return stripAccents(value);
   }
 
   private jaccardSimilarity(left: string, right: string) {
-    const leftSet = new Set(left.split(/[^a-z0-9]+/).filter(Boolean));
-    const rightSet = new Set(right.split(/[^a-z0-9]+/).filter(Boolean));
-    const intersection = [...leftSet].filter((token) => rightSet.has(token)).length;
-    const union = new Set([...leftSet, ...rightSet]).size || 1;
-    return intersection / union;
+    return jaccardSimilarity(left, right);
   }
 
   private async appendSuggestionComparisonLog(entry: {
@@ -1778,19 +1544,9 @@ export class AiAssistantService {
     };
     createdQuotation?: Record<string, unknown>;
   }) {
-    try {
-      const filePath = resolve(process.cwd(), 'apps/api/storage/ai-learning/ai-suggestion-comparison-log.jsonl');
-      await mkdir(dirname(filePath), { recursive: true });
-      await appendFile(
-        filePath,
-        `${JSON.stringify({
-          loggedAt: new Date().toISOString(),
-          ...entry,
-        })}\n`,
-        'utf8',
-      );
-    } catch (error) {
-      console.error('appendSuggestionComparisonLog failed:', error);
-    }
+    await this.aiLearningLogService.append('ai-suggestion-comparison-log.jsonl', {
+      loggedAt: new Date().toISOString(),
+      ...entry,
+    });
   }
 }

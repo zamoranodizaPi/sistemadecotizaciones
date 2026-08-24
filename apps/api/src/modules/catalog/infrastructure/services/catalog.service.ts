@@ -29,8 +29,6 @@ export class CatalogService {
   }
 
   async listCatalog() {
-    await this.syncActivityCatalogToConceptCategory();
-
     return this.prisma.category.findMany({
       where: { deletedAt: null },
       include: {

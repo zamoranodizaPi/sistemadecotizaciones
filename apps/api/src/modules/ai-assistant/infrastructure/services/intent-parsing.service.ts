@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-type ParsedIntent = {
+export type ParsedIntent = {
   category: string | null;
   service: string | null;
   variables: Record<string, number | string>;
@@ -18,7 +18,7 @@ type ParsedIntent = {
 };
 
 @Injectable()
-export class AiService {
+export class IntentParsingService {
   constructor(private readonly configService: ConfigService) {}
 
   async parseQuoteIntent(

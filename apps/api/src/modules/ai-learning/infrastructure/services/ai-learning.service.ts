@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../../shared/infrastructure/prisma.service';
+import { normalizeForMatching } from '../../../../shared/domain/text-similarity';
 import {
   CreateAiLearningPromptDto,
   UpdateAiLearningPromptDto,
@@ -237,13 +238,7 @@ export class AiLearningService {
   }
 
   normalizeInput(text: string) {
-    return text
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    return normalizeForMatching(text);
   }
 
   async findBestRule(inputText: string, mode = 'CATALOG_MATCH'): Promise<LearnedSuggestion | null> {

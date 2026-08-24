@@ -409,12 +409,13 @@ export type ReusableTextBlockResponse = Array<{
 
 export type AiSuggestedQuoteResponse = {
   mode: 'CATALOG_MATCH' | 'STRUCTURED_JSON';
-  engine: 'openai' | 'rules' | 'local_learning';
+  engine: 'openai' | 'anthropic' | 'rules' | 'local_learning';
   ai_status:
     | 'openai_ok'
+    | 'anthropic_ok'
     | 'fallback_no_key'
     | 'fallback_insufficient_quota'
-    | 'fallback_openai_error'
+    | 'fallback_provider_error'
     | 'local_rule_match';
   detected: {
     category: string | null;

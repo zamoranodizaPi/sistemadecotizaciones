@@ -8,12 +8,13 @@ export type ParsedIntent = {
   keywords: string[];
   qualifiers: string[];
   confidence: number;
-  engine: 'openai' | 'rules' | 'local_learning';
+  engine: 'openai' | 'anthropic' | 'rules' | 'local_learning';
   aiStatus:
     | 'openai_ok'
+    | 'anthropic_ok'
     | 'fallback_no_key'
     | 'fallback_insufficient_quota'
-    | 'fallback_openai_error'
+    | 'fallback_provider_error'
     | 'local_rule_match';
 };
 
@@ -35,12 +36,14 @@ export class IntentParsingService {
       return heuristic;
     }
 
+    const providerName = this.aiProvider.getName();
+
     try {
       const providerResult = await this.aiProvider.parseIntent(text, context);
       return this.mergeParsedIntent(heuristic, {
         ...providerResult,
-        engine: 'openai',
-        aiStatus: 'openai_ok',
+        engine: providerName,
+        aiStatus: providerName === 'anthropic' ? 'anthropic_ok' : 'openai_ok',
       });
     } catch (error) {
       console.error('AI parse fallback:', error);
@@ -48,7 +51,7 @@ export class IntentParsingService {
         text,
         error instanceof Error && error.message.includes('insufficient_quota')
           ? 'fallback_insufficient_quota'
-          : 'fallback_openai_error',
+          : 'fallback_provider_error',
       );
     }
   }
@@ -62,9 +65,10 @@ export class IntentParsingService {
     if (this.aiProvider.isAvailable()) {
       try {
         const result = await this.aiProvider.generateProposal(text, context);
+        const providerName = this.aiProvider.getName();
         return {
-          engine: 'openai' as const,
-          ai_status: 'openai_ok' as const,
+          engine: providerName,
+          ai_status: providerName === 'anthropic' ? ('anthropic_ok' as const) : ('openai_ok' as const),
           proposal: result.proposal,
         };
       } catch (error) {

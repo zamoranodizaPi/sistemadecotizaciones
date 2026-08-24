@@ -546,7 +546,7 @@ export function AiAssistantWorkspace() {
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-[var(--color-border)] bg-white p-4">
                 <div className="flex items-center gap-2 text-sm font-medium text-[var(--color-text)]">
                   <Bot className="h-4 w-4" />
-                  Motor {suggestion.engine === 'openai' ? 'OpenAI' : suggestion.engine === 'local_learning' ? 'Regla aprendida' : 'Reglas locales'}
+                  Motor {suggestion.engine === 'openai' ? 'OpenAI' : suggestion.engine === 'anthropic' ? 'Claude' : suggestion.engine === 'local_learning' ? 'Regla aprendida' : 'Reglas locales'}
                 </div>
                 <div className="rounded-full bg-[var(--color-panel-subtle)] px-3 py-1 text-xs font-medium text-[var(--color-text-muted)]">
                   Estado: {suggestion.ai_status}
@@ -647,9 +647,11 @@ export function AiAssistantWorkspace() {
                         Motor:{' '}
                         {suggestion.engine === 'openai'
                           ? 'OpenAI'
-                          : suggestion.engine === 'local_learning'
-                            ? 'Regla aprendida'
-                            : 'Reglas locales'}
+                          : suggestion.engine === 'anthropic'
+                            ? 'Claude'
+                            : suggestion.engine === 'local_learning'
+                              ? 'Regla aprendida'
+                              : 'Reglas locales'}
                       </div>
                       <div className="rounded-full bg-white px-3 py-1 text-xs font-medium text-[var(--color-text-muted)]">
                         Estado: {suggestion.ai_status}

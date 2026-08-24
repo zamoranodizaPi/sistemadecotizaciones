@@ -26,6 +26,9 @@ export type AiProviderProposalResult = {
 };
 
 export interface AiProvider {
+  /** Identificador estable del proveedor, usado para etiquetar la respuesta (UI, logs). */
+  getName(): 'openai' | 'anthropic';
+
   /** true si el proveedor tiene lo necesario (p.ej. una API key) para responder. */
   isAvailable(): boolean;
 

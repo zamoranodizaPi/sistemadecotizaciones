@@ -16,6 +16,10 @@ import {
 export class OpenAiProvider implements AiProvider {
   constructor(private readonly configService: ConfigService) {}
 
+  getName(): 'openai' {
+    return 'openai';
+  }
+
   isAvailable(): boolean {
     return Boolean(this.configService.get<string>('OPENAI_API_KEY'));
   }

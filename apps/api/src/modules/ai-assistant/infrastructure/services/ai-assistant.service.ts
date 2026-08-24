@@ -96,7 +96,7 @@ export class AiAssistantService {
         suggested_commercial_text: '',
         structured_output: structured.proposal,
         historical_references: [],
-        confidence: structured.engine === 'openai' ? 0.92 : 0.74,
+        confidence: structured.engine === 'openai' || structured.engine === 'anthropic' ? 0.92 : 0.74,
         catalog_updates: { pending_count: 0, detected_pending: [] },
         missing_fields: [],
         needs_review: false,

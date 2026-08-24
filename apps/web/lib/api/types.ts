@@ -121,6 +121,16 @@ export type CompanyProfileResponse = {
   updatedAt: string;
 };
 
+export type ClientInsightsResponse = {
+  source: 'client' | 'industry';
+  industry?: string;
+  quotationCount: number;
+  frequentServices: Array<{ name: string; count: number }>;
+  frequentWorkItems: Array<{ name: string; count: number }>;
+  travelLocations: Array<{ name: string; count: number }>;
+  avgTotal: number | null;
+} | null;
+
 export type ClientResponse = Array<{
   id: string;
   legalName: string;

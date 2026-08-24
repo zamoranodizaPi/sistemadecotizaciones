@@ -16,6 +16,7 @@ import type {
   AssignableUserResponse,
   AuthUser,
   CatalogResponse,
+  ClientInsightsResponse,
   ClientImportConfirmResponse,
   ClientImportPreviewResponse,
   CompanyProfileResponse,
@@ -97,6 +98,14 @@ export function useDashboardMetrics() {
   return useQuery({
     queryKey: ['dashboard-metrics'],
     queryFn: () => apiGet<DashboardMetricsResponse>('/metrics/dashboard'),
+  });
+}
+
+export function useClientInsights(clientId: string | null) {
+  return useQuery({
+    queryKey: ['client-insights', clientId],
+    queryFn: () => apiGet<ClientInsightsResponse>(`/ai-learning/client-insights/${clientId}`),
+    enabled: Boolean(clientId),
   });
 }
 
@@ -765,6 +774,7 @@ export function useCreateQuotation() {
       clientName?: string;
       contactName?: string;
       createdById?: string;
+      skipLearning?: boolean;
       title: string;
       coverTitle?: string;
       executiveSummary?: string;
@@ -1086,6 +1096,7 @@ export function useUpdateQuotationFromBuilder() {
         clientName?: string;
         contactName?: string;
         createdById?: string;
+        skipLearning?: boolean;
         title: string;
         coverTitle?: string;
         executiveSummary?: string;

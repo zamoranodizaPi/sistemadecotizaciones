@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEnum,
   IsArray,
   IsNumber,
@@ -153,6 +154,13 @@ export class CreateQuotationDto {
   @IsOptional()
   @IsUUID()
   createdById?: string;
+
+  /** Autosave silencioso: persiste el borrador sin re-disparar el
+   * aprendizaje (LearnedRule/ClientPattern), que ya corrió con este mismo
+   * contenido en el guardado anterior. */
+  @IsOptional()
+  @IsBoolean()
+  skipLearning?: boolean;
 
   @IsString()
   title!: string;

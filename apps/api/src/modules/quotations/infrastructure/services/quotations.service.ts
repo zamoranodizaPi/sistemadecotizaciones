@@ -578,7 +578,9 @@ export class QuotationsService {
       await this.syncSpecialConsiderationCatalog(specialConsiderationRows);
       await this.syncServiceTemplate(dto);
       await this.syncWorkItemCatalog(commercialSections);
-      await this.recordQuotationLearning(quotation);
+      if (!dto.skipLearning) {
+        await this.recordQuotationLearning(quotation);
+      }
 
       return quotation;
     } catch (error) {
@@ -739,7 +741,9 @@ export class QuotationsService {
     await this.syncSpecialConsiderationCatalog(specialConsiderationRows);
     await this.syncServiceTemplate(dto);
     await this.syncWorkItemCatalog(commercialSections);
-    await this.recordQuotationLearning(updated);
+    if (!dto.skipLearning) {
+      await this.recordQuotationLearning(updated);
+    }
 
     return updated;
   }

@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowDown, ArrowUp, Check, Minus, Pencil, Plus, Search, Sparkles, Trash2 } from 'lucide-react';
 import {
   useCatalog,
+  useClientInsights,
   useClients,
   useCompanyProfile,
   useCreateQuotation,
@@ -33,6 +34,7 @@ import { SectionHeading } from '@/components/ui/section-heading';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { Toast } from '@/components/ui/toast';
+import { QuotationSummarySidebar } from './quotation-builder/summary-sidebar';
 
 import {
   createLocalId,
@@ -117,6 +119,8 @@ export function QuotationBuilder() {
   const [serviceQuery, setServiceQuery] = useState('');
   const [items, setItems] = useState<SummaryItem[]>([]);
   const [clientId, setClientId] = useState('');
+  const clientInsightsQuery = useClientInsights(clientId || null);
+  const clientInsights = clientInsightsQuery.data || null;
   const [clientName, setClientName] = useState('');
   const [contactName, setContactName] = useState('');
   const [clientPaletteOpen, setClientPaletteOpen] = useState(false);
@@ -1349,17 +1353,35 @@ export function QuotationBuilder() {
     ]);
   }
 
-  function addTravelConsideration() {
+  function addTravelConsideration(location = '') {
     setSpecialConsiderations((current) => [
       ...current,
       {
         localId: createLocalId('travel'),
         type: 'TRAVEL',
-        location: '',
+        location,
         mxnAmount: '',
         usdAmount: '',
       },
     ]);
+  }
+
+  function applyTravelSuggestions() {
+    if (!clientInsights?.travelLocations.length) {
+      return;
+    }
+
+    const existingLocations = new Set(
+      specialConsiderations
+        .filter((item): item is TravelConsideration => item.type === 'TRAVEL')
+        .map((item) => item.location.trim().toLowerCase()),
+    );
+
+    clientInsights.travelLocations
+      .filter((location) => !existingLocations.has(location.name.trim().toLowerCase()))
+      .forEach((location) => addTravelConsideration(location.name));
+
+    showTimedToast('Viáticos agregados', 'Revisa los montos antes de continuar.');
   }
 
   function removeSpecialConsideration(localId: string) {
@@ -1934,9 +1956,10 @@ export function QuotationBuilder() {
     );
   }
 
-  async function persistQuotation(options?: { saveModifiedPrices?: boolean; asDraft?: boolean }) {
+  async function persistQuotation(options?: { saveModifiedPrices?: boolean; asDraft?: boolean; silent?: boolean }) {
     const saveModifiedPrices = options?.saveModifiedPrices || false;
     const asDraft = options?.asDraft || false;
+    const silent = options?.silent || false;
 
     const normalizedClientName = clientName.trim();
     if ((!clientId && !normalizedClientName) || !exchangeRate) {
@@ -1948,6 +1971,7 @@ export function QuotationBuilder() {
       clientName: normalizedClientName || undefined,
       contactName: contactName.trim() || undefined,
       createdById: user.id,
+      skipLearning: silent,
       title: title.trim() || 'Borrador sin título',
       coverTitle: coverTitle.trim() || title.trim() || 'Borrador sin título',
       executiveSummary,
@@ -2091,10 +2115,12 @@ export function QuotationBuilder() {
         setDraftQuotationId(persistedQuotationId);
       }
 
-      showTimedToast(
-        'Borrador guardado',
-        'La cotización quedó guardada como borrador y puedes retomarla después desde Cotizaciones.',
-      );
+      if (!silent) {
+        showTimedToast(
+          'Borrador guardado',
+          'La cotización quedó guardada como borrador y puedes retomarla después desde Cotizaciones.',
+        );
+      }
       return;
     }
 
@@ -2122,6 +2148,37 @@ export function QuotationBuilder() {
   async function saveDraft() {
     await persistQuotation({ asDraft: true });
   }
+
+  // Autosave silencioso: reinicia un timer de 25s en cada cambio relevante
+  // (o cambio de paso) y guarda como borrador sin toast ni navegar, para no
+  // perder trabajo si el usuario cierra la pestaña por accidente. Complementa
+  // -no reemplaza- el boton manual "Guardar borrador".
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isFirstAutosaveRenderRef = useRef(true);
+
+  useEffect(() => {
+    if (isFirstAutosaveRenderRef.current) {
+      isFirstAutosaveRenderRef.current = false;
+      return;
+    }
+
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+    }
+
+    autosaveTimerRef.current = setTimeout(() => {
+      persistQuotation({ asDraft: true, silent: true }).catch(() => {
+        // Autosave en segundo plano: falla en silencio, se reintenta en el siguiente cambio.
+      });
+    }, 25000);
+
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, specialConsiderations, commercialSections, clientName, clientId, step]);
 
   if (
     catalogQuery.isLoading ||
@@ -2188,7 +2245,21 @@ export function QuotationBuilder() {
         : null;
   const canAdvanceFromClient = Boolean(hasClientName && currency);
   const canAdvanceFromServices = items.length > 0;
-  const canAdvanceFromConsiderations = true;
+  const incompleteConsideration = specialConsiderations.find((item) => {
+    if (item.type === 'TRAVEL') {
+      return !item.location.trim();
+    }
+
+    return !item.concept.trim() || (item.mode === 'PERCENTAGE' ? !item.percentage.trim() : !item.mxnAmount.trim() && !item.usdAmount.trim());
+  });
+  const considerationsBlockedReason = incompleteConsideration
+    ? incompleteConsideration.type === 'TRAVEL'
+      ? 'Hay un viático sin lugar definido.'
+      : 'Hay un concepto adicional sin monto o porcentaje.'
+    : null;
+  const canAdvanceFromConsiderations = !incompleteConsideration;
+  // "Actividades" es opcional por diseño (se auto-deriva de los servicios agregados),
+  // no hay una regla de negocio que deba bloquear el avance desde aquí.
   const canAdvanceFromWork = true;
   const stepItems = [
     { id: 'client', label: 'Configuración inicial' },
@@ -2272,6 +2343,8 @@ export function QuotationBuilder() {
       </div>
 
       {step === 'client' ? (
+        <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+        <div>
           <Card>
           <CardHeader title="Paso 1. Configuración inicial" description="Define cliente, moneda y servicio base. El vendedor se toma automáticamente del usuario autenticado." />
           <CardContent className="space-y-4">
@@ -2653,6 +2726,23 @@ export function QuotationBuilder() {
             </div>
           </CardContent>
         </Card>
+        </div>
+        <aside className="lg:sticky lg:top-24 lg:self-start">
+          <QuotationSummarySidebar
+            title={title}
+            executiveSummary={executiveSummary}
+            itemsCount={items.length}
+            subtotal={subtotal}
+            tax={tax}
+            total={total}
+            currency={currency}
+            finalChargeLabel={finalChargeLabel}
+            finalChargeRate={finalChargeRate}
+            insights={clientInsights}
+            onApplyTravelSuggestions={applyTravelSuggestions}
+          />
+        </aside>
+        </div>
       ) : null}
 
       {step === 'services' ? (
@@ -3098,6 +3188,8 @@ export function QuotationBuilder() {
       ) : null}
 
       {step === 'considerations' ? (
+        <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+        <div>
         <Card>
           <CardHeader
             title="Paso 3. Consideraciones especiales"
@@ -3203,7 +3295,7 @@ export function QuotationBuilder() {
                   <p className="text-sm font-semibold text-[var(--color-text)]">Viáticos</p>
                   <p className="text-sm text-[var(--color-text-muted)]">Define lugar y monto en pesos y dólares para reutilizarlos después.</p>
                 </div>
-                <Button variant="secondary" onClick={addTravelConsideration}>
+                <Button variant="secondary" onClick={() => addTravelConsideration()}>
                   <Plus className="h-4 w-4" />
                   Agregar viático
                 </Button>
@@ -3293,19 +3385,41 @@ export function QuotationBuilder() {
               </div>
             </div>
 
-            <div className="flex justify-between">
+            <div className="flex items-center justify-between gap-3">
               <Button variant="secondary" onClick={() => setStep('services')}>
                 Regresar a suministros
               </Button>
-              <Button onClick={() => setStep('work')} disabled={!canAdvanceFromConsiderations}>
-                Continuar a actividades
-              </Button>
+              <div className="flex items-center gap-3">
+                {considerationsBlockedReason ? (
+                  <p className="text-xs text-[var(--color-text-faint)]">{considerationsBlockedReason}</p>
+                ) : null}
+                <Button onClick={() => setStep('work')} disabled={!canAdvanceFromConsiderations}>
+                  Continuar a actividades
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
+        </div>
+        <aside className="lg:sticky lg:top-24 lg:self-start">
+          <QuotationSummarySidebar
+            title={title}
+            executiveSummary={executiveSummary}
+            itemsCount={items.length}
+            subtotal={subtotal}
+            tax={tax}
+            total={total}
+            currency={currency}
+            finalChargeLabel={finalChargeLabel}
+            finalChargeRate={finalChargeRate}
+          />
+        </aside>
+        </div>
       ) : null}
 
       {step === 'work' ? (
+        <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+        <div>
         <Card>
           <CardHeader title="Paso 4. Actividades" description="Puedes agregar, borrar y reordenar las actividades según el orden en que las captures." />
           <CardContent className="space-y-4">
@@ -3454,9 +3568,26 @@ export function QuotationBuilder() {
             </div>
           </CardContent>
         </Card>
+        </div>
+        <aside className="lg:sticky lg:top-24 lg:self-start">
+          <QuotationSummarySidebar
+            title={title}
+            executiveSummary={executiveSummary}
+            itemsCount={items.length}
+            subtotal={subtotal}
+            tax={tax}
+            total={total}
+            currency={currency}
+            finalChargeLabel={finalChargeLabel}
+            finalChargeRate={finalChargeRate}
+          />
+        </aside>
+        </div>
       ) : null}
 
       {step === 'conditions' ? (
+        <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+        <div>
         <Card>
           <CardHeader title="Paso 5. Condiciones generales" description="Estas secciones quedan como último valor usado para la siguiente cotización." />
           <CardContent className="space-y-4">
@@ -3505,6 +3636,21 @@ export function QuotationBuilder() {
             </div>
           </CardContent>
         </Card>
+        </div>
+        <aside className="lg:sticky lg:top-24 lg:self-start">
+          <QuotationSummarySidebar
+            title={title}
+            executiveSummary={executiveSummary}
+            itemsCount={items.length}
+            subtotal={subtotal}
+            tax={tax}
+            total={total}
+            currency={currency}
+            finalChargeLabel={finalChargeLabel}
+            finalChargeRate={finalChargeRate}
+          />
+        </aside>
+        </div>
       ) : null}
 
       {step === 'preview' ? (

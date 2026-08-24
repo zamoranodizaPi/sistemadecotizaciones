@@ -1,2 +1,0 @@
-ALTER TABLE "Quotation"
-ADD COLUMN "finalChargeRate" DECIMAL(8,4) NOT NULL DEFAULT 16;

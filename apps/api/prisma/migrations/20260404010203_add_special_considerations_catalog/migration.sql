@@ -1,2 +1,0 @@
--- RenameIndex
-ALTER INDEX "ServicePricingProfileVersion_pricingProfileId_validFrom_validTo" RENAME TO "ServicePricingProfileVersion_pricingProfileId_validFrom_val_idx";

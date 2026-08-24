@@ -24,6 +24,11 @@ export class AiLearningController {
     return this.clientInsightsService.getClientInsights(clientId);
   }
 
+  @Get('health')
+  getHealth() {
+    return this.aiLearningService.getHealth();
+  }
+
   @Get('prompts')
   listPrompts() {
     return this.aiLearningService.listPrompts();

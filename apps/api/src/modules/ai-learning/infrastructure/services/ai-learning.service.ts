@@ -37,6 +37,28 @@ type FeedbackPayload = {
 export class AiLearningService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Señales baratas y 100% confiables de si el motor local esta
+   * realmente aprendiendo, sin depender de que un LLM evalue sus
+   * propias sugerencias pasadas. */
+  async getHealth() {
+    const [totalRules, ruleUsage, feedbackCount, quotationsLearnedFrom, totalQuotations] =
+      await Promise.all([
+        this.prisma.learnedRule.count(),
+        this.prisma.learnedRule.aggregate({ _sum: { usageCount: true } }),
+        this.prisma.aiFeedback.count(),
+        this.prisma.quotation.count({ where: { learnedAt: { not: null }, deletedAt: null } }),
+        this.prisma.quotation.count({ where: { deletedAt: null } }),
+      ]);
+
+    return {
+      totalRules,
+      totalRuleUsage: ruleUsage._sum.usageCount || 0,
+      feedbackCount,
+      quotationsLearnedFrom,
+      totalQuotations,
+    };
+  }
+
   async listPrompts() {
     try {
       return await this.prisma.aiLearningPrompt.findMany({

@@ -131,6 +131,14 @@ export type ClientInsightsResponse = {
   avgTotal: number | null;
 } | null;
 
+export type AiLearningHealthResponse = {
+  totalRules: number;
+  totalRuleUsage: number;
+  feedbackCount: number;
+  quotationsLearnedFrom: number;
+  totalQuotations: number;
+};
+
 export type ClientResponse = Array<{
   id: string;
   legalName: string;

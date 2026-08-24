@@ -3,6 +3,7 @@
 import { Save, Sparkles, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  useAiLearningHealth,
   useAiLearningPrompts,
   useAiLearningTraining,
   useCreateAiLearningPrompt,
@@ -101,6 +102,7 @@ type TrainingEntry = {
 };
 
 export function AiLearningWorkspace() {
+  const healthQuery = useAiLearningHealth();
   const promptsQuery = useAiLearningPrompts();
   const createPromptMutation = useCreateAiLearningPrompt();
   const updatePromptMutation = useUpdateAiLearningPrompt();
@@ -412,6 +414,53 @@ export function AiLearningWorkspace() {
           </Button>
         </div>
       </div>
+
+      <section className="grid gap-4 xl:grid-cols-4">
+        <Card className="overflow-hidden">
+          <CardContent className="space-y-2">
+            <p className="text-sm text-[var(--color-text-muted)]">Reglas aprendidas</p>
+            <p className="text-3xl font-semibold tracking-[-0.04em]">
+              {healthQuery.data?.totalRules ?? '—'}
+            </p>
+            <p className="text-sm text-[var(--color-text-muted)]">Patrones únicos guardados en LearnedRule.</p>
+          </CardContent>
+        </Card>
+        <Card className="overflow-hidden">
+          <CardContent className="space-y-2">
+            <p className="text-sm text-[var(--color-text-muted)]">Usos del motor local</p>
+            <p className="text-3xl font-semibold tracking-[-0.04em]">
+              {healthQuery.data?.totalRuleUsage ?? '—'}
+            </p>
+            <p className="text-sm text-[var(--color-text-muted)]">
+              Veces que una regla propia resolvió una sugerencia sin llamar a la API externa.
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="overflow-hidden">
+          <CardContent className="space-y-2">
+            <p className="text-sm text-[var(--color-text-muted)]">Feedback registrado</p>
+            <p className="text-3xl font-semibold tracking-[-0.04em]">
+              {healthQuery.data?.feedbackCount ?? '—'}
+            </p>
+            <p className="text-sm text-[var(--color-text-muted)]">Correcciones capturadas para futuras reglas.</p>
+          </CardContent>
+        </Card>
+        <Card className="overflow-hidden">
+          <CardContent className="space-y-2">
+            <p className="text-sm text-[var(--color-text-muted)]">Cobertura de aprendizaje</p>
+            <p className="text-3xl font-semibold tracking-[-0.04em]">
+              {healthQuery.data
+                ? `${healthQuery.data.quotationsLearnedFrom}/${healthQuery.data.totalQuotations}`
+                : '—'}
+            </p>
+            <p className="text-sm text-[var(--color-text-muted)]">
+              {healthQuery.data && healthQuery.data.totalQuotations > 0
+                ? `${Math.round((healthQuery.data.quotationsLearnedFrom / healthQuery.data.totalQuotations) * 100)}% de las cotizaciones ya alimentaron el aprendizaje.`
+                : 'Cotizaciones que ya alimentaron el aprendizaje.'}
+            </p>
+          </CardContent>
+        </Card>
+      </section>
 
       <div className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
         <Card>

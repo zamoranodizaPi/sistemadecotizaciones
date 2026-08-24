@@ -1847,6 +1847,11 @@ export class QuotationsService {
         ),
         total: Number(quotation.total),
       });
+
+      await this.prisma.quotation.update({
+        where: { id: quotation.id },
+        data: { learnedAt: new Date() },
+      });
     } catch (error) {
       console.error('recordQuotationLearning failed:', error);
     }
@@ -2073,6 +2078,8 @@ export class QuotationsService {
 
   async rebuildLearningFromQuotations() {
     await this.prisma.learnedRule.deleteMany({});
+    await this.prisma.clientPattern.deleteMany({});
+    await this.prisma.industryPattern.deleteMany({});
     const quotations = await this.prisma.quotation.findMany({
       where: { deletedAt: null },
       include: {

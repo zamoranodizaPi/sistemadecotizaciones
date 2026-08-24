@@ -295,6 +295,7 @@ model Quotation {
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
   deletedAt        DateTime?
+  learnedAt        DateTime?
   client           Client             @relation(fields: [clientId], references: [id])
   pipeline         Pipeline?          @relation(fields: [pipelineId], references: [id])
   stage            DealStage?         @relation(fields: [stageId], references: [id])

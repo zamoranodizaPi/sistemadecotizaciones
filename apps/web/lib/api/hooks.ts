@@ -11,6 +11,7 @@ import type {
   AiProyectoConvertResponse,
   AiLearningPromptResponse,
   AiLearningTrainingResponse,
+  AiLearningHealthResponse,
   AiProyectoResponse,
   AiSuggestedQuoteResponse,
   AssignableUserResponse,
@@ -106,6 +107,13 @@ export function useClientInsights(clientId: string | null) {
     queryKey: ['client-insights', clientId],
     queryFn: () => apiGet<ClientInsightsResponse>(`/ai-learning/client-insights/${clientId}`),
     enabled: Boolean(clientId),
+  });
+}
+
+export function useAiLearningHealth() {
+  return useQuery({
+    queryKey: ['ai-learning-health'],
+    queryFn: () => apiGet<AiLearningHealthResponse>('/ai-learning/health'),
   });
 }
 
@@ -747,6 +755,7 @@ export function useRebuildLearning() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['quotations'] });
       queryClient.invalidateQueries({ queryKey: ['ai-learning-training'] });
+      queryClient.invalidateQueries({ queryKey: ['ai-learning-health'] });
     },
   });
 }

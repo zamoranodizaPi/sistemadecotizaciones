@@ -617,6 +617,7 @@ export function useCreateClient() {
       commercialName?: string;
       rfc: string;
       address?: string;
+      industry?: string;
       contacts: Array<{
         fullName: string;
         email?: string;
@@ -640,6 +641,7 @@ export function useUpdateClient() {
       commercialName,
       rfc,
       address,
+      industry,
       contacts,
     }: {
       id: string;
@@ -647,6 +649,7 @@ export function useUpdateClient() {
       commercialName?: string;
       rfc: string;
       address?: string;
+      industry?: string;
       contacts: Array<{
         fullName: string;
         email?: string;
@@ -659,6 +662,7 @@ export function useUpdateClient() {
         commercialName,
         rfc,
         address,
+        industry,
         contacts,
       }),
     onSuccess: () => {

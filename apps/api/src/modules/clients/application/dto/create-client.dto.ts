@@ -1,11 +1,13 @@
 import {
   IsArray,
   IsEmail,
+  IsIn,
   IsOptional,
   IsString,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { CLIENT_INDUSTRIES } from '../../domain/client-industries';
 
 class ContactDto {
   @IsString()
@@ -40,6 +42,10 @@ export class CreateClientDto {
   @IsString()
   address?: string;
 
+  @IsOptional()
+  @IsIn([...CLIENT_INDUSTRIES])
+  industry?: string;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ContactDto)
@@ -62,6 +68,10 @@ export class UpdateClientDto {
   @IsString()
   address?: string;
 
+  @IsOptional()
+  @IsIn([...CLIENT_INDUSTRIES])
+  industry?: string;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ContactDto)
@@ -83,4 +93,8 @@ export class CloneClientDto {
   @IsOptional()
   @IsString()
   address?: string;
+
+  @IsOptional()
+  @IsIn([...CLIENT_INDUSTRIES])
+  industry?: string;
 }

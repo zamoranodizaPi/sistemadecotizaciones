@@ -46,6 +46,7 @@ export class ClientsService {
         commercialName: dto.commercialName,
         rfc: dto.rfc?.trim() || null,
         address: dto.address?.trim() || null,
+        industry: dto.industry || null,
         contacts: {
           create: contacts.map((contact, index) => ({
             ...contact,
@@ -90,6 +91,7 @@ export class ClientsService {
             commercialName: dto.commercialName,
             rfc: dto.rfc?.trim() || null,
             address: dto.address?.trim() || null,
+            industry: dto.industry || null,
           },
           include: {
             contacts: {
@@ -114,6 +116,7 @@ export class ClientsService {
           commercialName: dto.commercialName,
           rfc: dto.rfc?.trim() || null,
           address: dto.address?.trim() || null,
+          industry: dto.industry || null,
           ...(primaryNameChanged
             ? {
                 contacts: {
@@ -171,6 +174,7 @@ export class ClientsService {
         commercialName: dto.commercialName ?? source.commercialName,
         rfc: dto.rfc?.trim() || null,
         address: dto.address?.trim() || source.address,
+        industry: dto.industry || source.industry,
         contacts: {
           create: source.contacts.map((contact, index) => ({
             fullName: contact.fullName,

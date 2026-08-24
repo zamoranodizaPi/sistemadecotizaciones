@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma, ActivityCatalog } from '@prisma/client';
 import * as XLSX from 'xlsx';
 import { PrismaService } from '../../../../shared/infrastructure/prisma.service';
+import { CLIENT_INDUSTRIES } from '../../../clients/domain/client-industries';
 import { CatalogService } from './catalog.service';
 
 type ParsedOptionDefinition = {
@@ -333,11 +334,41 @@ export class ExcelImportService {
     }
   }
 
+  private mapSectorToIndustry(sector?: string): string | null {
+    if (!sector) {
+      return null;
+    }
+
+    const normalized = sector
+      .normalize('NFD')
+      .replace(/\p{Mark}/gu, '')
+      .toLowerCase();
+
+    if (normalized.includes('miner')) {
+      return 'Minería';
+    }
+    if (normalized.includes('subestacion')) {
+      return 'Subestaciones';
+    }
+    if (normalized.includes('integrador')) {
+      return 'Integrador industrial';
+    }
+    if (normalized.includes('generacion') || normalized.includes('energia') || normalized.includes('power')) {
+      return 'Generación de energía';
+    }
+    if (normalized.includes('industria')) {
+      return 'Industria general';
+    }
+
+    return (CLIENT_INDUSTRIES as readonly string[]).includes(sector) ? sector : 'Otro';
+  }
+
   async importParsedClients(rows: ParsedClientRow[], source = 'clients-import') {
     try {
       const logs: Array<Record<string, unknown>> = [];
 
       for (const row of rows) {
+        const industry = this.mapSectorToIndustry(row.sector);
         const client = await this.prisma.client.upsert({
           where: { rfc: row.rfc },
           update: {
@@ -347,6 +378,7 @@ export class ExcelImportService {
             city: row.ciudad || null,
             state: row.estado || null,
             country: row.pais || 'México',
+            ...(industry ? { industry } : {}),
             updatedAt: new Date(),
             deletedAt: null,
           },
@@ -358,6 +390,7 @@ export class ExcelImportService {
             city: row.ciudad || null,
             state: row.estado || null,
             country: row.pais || 'México',
+            industry,
           },
         });
 
@@ -381,6 +414,7 @@ export class ExcelImportService {
           rfc: row.rfc,
           contact: row.contactoPrincipal,
           sector: row.sector || null,
+          industry,
           action: 'CLIENT_IMPORTED',
           source,
         });

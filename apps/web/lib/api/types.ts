@@ -127,6 +127,7 @@ export type ClientResponse = Array<{
   commercialName: string | null;
   rfc: string | null;
   address?: string | null;
+  industry?: string | null;
   contacts: Array<{
     id: string;
     fullName: string;

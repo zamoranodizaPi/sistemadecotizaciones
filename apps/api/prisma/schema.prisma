@@ -222,6 +222,7 @@ model Client {
   city        String?
   state       String?
   country     String?     @default("MX")
+  industry    String?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
   deletedAt   DateTime?
@@ -229,6 +230,7 @@ model Client {
   quotations  Quotation[]
 
   @@index([deletedAt])
+  @@index([industry])
 }
 
 model Contact {

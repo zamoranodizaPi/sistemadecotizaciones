@@ -228,6 +228,7 @@ model Client {
   deletedAt   DateTime?
   contacts    Contact[]
   quotations  Quotation[]
+  pattern     ClientPattern?
 
   @@index([deletedAt])
   @@index([industry])
@@ -450,6 +451,32 @@ model Activity {
   user         User?        @relation(fields: [userId], references: [id])
 
   @@index([quotationId, createdAt])
+}
+
+model ClientPattern {
+  id                String    @id @default(uuid())
+  clientId          String    @unique
+  industry          String?
+  quotationCount    Int       @default(0)
+  frequentServices  Json
+  frequentWorkItems Json
+  travelLocations   Json
+  avgTotal          Decimal?  @db.Decimal(12, 2)
+  lastQuotationAt   DateTime?
+  updatedAt         DateTime  @updatedAt
+  client            Client    @relation(fields: [clientId], references: [id])
+
+  @@index([industry])
+}
+
+model IndustryPattern {
+  id                String   @id @default(uuid())
+  industry          String   @unique
+  clientCount       Int      @default(0)
+  quotationCount    Int      @default(0)
+  frequentServices  Json
+  frequentWorkItems Json
+  updatedAt         DateTime @updatedAt
 }
 
 model LearnedRule {

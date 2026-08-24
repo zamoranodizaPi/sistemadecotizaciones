@@ -9,11 +9,20 @@ import {
 } from '../../application/dto/ai-learning-training.dto';
 import { CreateAiLearningPromptDto, UpdateAiLearningPromptDto } from '../../application/dto/ai-learning-prompt.dto';
 import { AiLearningService } from '../../infrastructure/services/ai-learning.service';
+import { ClientInsightsService } from '../../infrastructure/services/client-insights.service';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('ai-learning')
 export class AiLearningController {
-  constructor(private readonly aiLearningService: AiLearningService) {}
+  constructor(
+    private readonly aiLearningService: AiLearningService,
+    private readonly clientInsightsService: ClientInsightsService,
+  ) {}
+
+  @Get('client-insights/:clientId')
+  getClientInsights(@Param('clientId') clientId: string) {
+    return this.clientInsightsService.getClientInsights(clientId);
+  }
 
   @Get('prompts')
   listPrompts() {

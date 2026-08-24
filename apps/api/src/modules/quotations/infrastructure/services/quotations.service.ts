@@ -11,13 +11,14 @@ import {
 } from '@prisma/client';
 
 type QuotationWithRelations = Quotation & {
-  client?: { legalName: string | null };
+  client?: { legalName: string | null; industry?: string | null };
   items?: QuotationItem[];
 };
 import { PrismaService } from '../../../../shared/infrastructure/prisma.service';
 import { CatalogService } from '../../../catalog/infrastructure/services/catalog.service';
 import { AiLearningService } from '../../../ai-learning/infrastructure/services/ai-learning.service';
 import { AiLearningLogService } from '../../../ai-learning/infrastructure/services/ai-learning-log.service';
+import { ClientInsightsService } from '../../../ai-learning/infrastructure/services/client-insights.service';
 import {
   CreateServiceCatalogDto,
   CreateReusableTextBlockDto,
@@ -45,6 +46,7 @@ export class QuotationsService {
     private readonly pipelineService: PipelineService,
     private readonly aiLearningService: AiLearningService,
     private readonly aiLearningLogService: AiLearningLogService,
+    private readonly clientInsightsService: ClientInsightsService,
     private readonly companyProfileService: CompanyProfileService,
     private readonly reporteWordService: ReporteWordService,
   ) {}
@@ -1830,6 +1832,17 @@ export class QuotationsService {
 
       const learningResult = await this.aiLearningService.learnFromSuggestion(learningPayload);
       await this.appendQuotationLearningLog(quotation, learningPayload, learningResult, 'learned');
+
+      await this.clientInsightsService.recalculatePatterns({
+        clientId: quotation.clientId,
+        industry: quotation.client?.industry || null,
+        services: suggestedServices,
+        workItems: suggestedWorkItems,
+        travelLocations: this.buildTravelWorkItems(specialConsiderations).map((item) =>
+          item.replace(/^Viáticos: /, ''),
+        ),
+        total: Number(quotation.total),
+      });
     } catch (error) {
       console.error('recordQuotationLearning failed:', error);
     }

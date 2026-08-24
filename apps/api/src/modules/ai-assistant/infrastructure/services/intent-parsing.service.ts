@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Inject, Injectable } from '@nestjs/common';
+import { AI_PROVIDER, AiProvider } from '../../domain/ai-provider';
 
 export type ParsedIntent = {
   category: string | null;
@@ -19,7 +19,7 @@ export type ParsedIntent = {
 
 @Injectable()
 export class IntentParsingService {
-  constructor(private readonly configService: ConfigService) {}
+  constructor(@Inject(AI_PROVIDER) private readonly aiProvider: AiProvider) {}
 
   async parseQuoteIntent(
     text: string,
@@ -30,24 +30,27 @@ export class IntentParsingService {
     },
   ): Promise<ParsedIntent> {
     const heuristic = this.parseWithRules(text, 'fallback_no_key');
-    const apiKey = this.configService.get<string>('OPENAI_API_KEY');
 
-    if (apiKey) {
-      try {
-        const openAiResult = await this.parseWithOpenAi(text, apiKey, context);
-        return this.mergeParsedIntent(heuristic, openAiResult);
-      } catch (error) {
-        console.error('AI parse fallback:', error);
-        return this.parseWithRules(
-          text,
-          error instanceof Error && error.message.includes('insufficient_quota')
-            ? 'fallback_insufficient_quota'
-            : 'fallback_openai_error',
-        );
-      }
+    if (!this.aiProvider.isAvailable()) {
+      return heuristic;
     }
 
-    return heuristic;
+    try {
+      const providerResult = await this.aiProvider.parseIntent(text, context);
+      return this.mergeParsedIntent(heuristic, {
+        ...providerResult,
+        engine: 'openai',
+        aiStatus: 'openai_ok',
+      });
+    } catch (error) {
+      console.error('AI parse fallback:', error);
+      return this.parseWithRules(
+        text,
+        error instanceof Error && error.message.includes('insufficient_quota')
+          ? 'fallback_insufficient_quota'
+          : 'fallback_openai_error',
+      );
+    }
   }
 
   async generateStructuredProposal(
@@ -56,214 +59,20 @@ export class IntentParsingService {
       learningPrompts?: string;
     },
   ) {
-    const apiKey = this.configService.get<string>('OPENAI_API_KEY');
-    if (apiKey) {
+    if (this.aiProvider.isAvailable()) {
       try {
-        return await this.generateStructuredProposalWithOpenAi(text, apiKey, context);
+        const result = await this.aiProvider.generateProposal(text, context);
+        return {
+          engine: 'openai' as const,
+          ai_status: 'openai_ok' as const,
+          proposal: result.proposal,
+        };
       } catch (error) {
         console.error('AI structured fallback:', error);
       }
     }
 
     return this.generateStructuredProposalWithRules(text);
-  }
-
-  private async parseWithOpenAi(
-    text: string,
-    apiKey: string,
-    context?: {
-      catalog?: string;
-      history?: string;
-      learningPrompts?: string;
-    },
-  ): Promise<ParsedIntent> {
-    const model = this.configService.get<string>('OPENAI_AI_ASSISTANT_MODEL') || 'gpt-4.1-mini';
-    const response = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        input: [
-          {
-            role: 'system',
-            content: [
-              {
-                type: 'input_text',
-                text:
-                  `Eres un asistente técnico especializado en servicios eléctricos industriales. NO inventes servicios y devuelve solo JSON válido y conciso.${context?.learningPrompts ? `\n\nPrompts de aprendizaje activos:\n${context.learningPrompts}` : ''}`,
-              },
-            ],
-          },
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'input_text',
-                text: `Catálogo disponible:\n${context?.catalog || 'Sin catálogo disponible'}\n\nHistorial de cotizaciones:\n${context?.history || 'Sin historial disponible'}\n\nTexto del usuario:\n${text}\n\nDevuelve JSON con:\n- category\n- service\n- variables\n- keywords\n- qualifiers\n- confidence`,
-              },
-            ],
-          },
-        ],
-        text: {
-          format: {
-            type: 'json_schema',
-            name: 'quote_intent',
-            strict: false,
-            schema: {
-              type: 'object',
-              additionalProperties: true,
-              properties: {
-                category: { type: ['string', 'null'] },
-                service: { type: ['string', 'null'] },
-                variables: {
-                  type: 'object',
-                  additionalProperties: true,
-                },
-                keywords: {
-                  type: 'array',
-                  items: { type: 'string' },
-                },
-                qualifiers: {
-                  type: 'array',
-                  items: { type: 'string' },
-                },
-                confidence: { type: 'number' },
-              },
-            },
-          },
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`OpenAI parse failed: ${response.status} ${await response.text()}`);
-    }
-
-    const payload = (await response.json()) as { output_text?: string };
-    let parsedRaw: Record<string, unknown> = {};
-
-    if (payload.output_text) {
-      try {
-        parsedRaw = JSON.parse(payload.output_text);
-      } catch {
-        parsedRaw = {};
-      }
-    }
-
-    const parsed = {
-      category: typeof parsedRaw.category === 'string' ? parsedRaw.category : null,
-      service: typeof parsedRaw.service === 'string' ? parsedRaw.service : null,
-      variables:
-        typeof parsedRaw.variables === 'object' && parsedRaw.variables !== null
-          ? (parsedRaw.variables as Record<string, string | number>)
-          : {},
-      keywords: Array.isArray(parsedRaw.keywords)
-        ? (parsedRaw.keywords.filter((item) => typeof item === 'string') as string[])
-        : [],
-      qualifiers: Array.isArray(parsedRaw.qualifiers)
-        ? (parsedRaw.qualifiers.filter((item) => typeof item === 'string') as string[])
-        : [],
-      confidence: typeof parsedRaw.confidence === 'number' ? parsedRaw.confidence : 0.7,
-    } as ParsedIntent;
-
-    return {
-      category: parsed.category || null,
-      service: parsed.service || null,
-      variables: parsed.variables || {},
-      keywords: parsed.keywords || [],
-      qualifiers: parsed.qualifiers || [],
-      confidence: Math.max(0, Math.min(1, parsed.confidence)),
-      engine: 'openai',
-      aiStatus: 'openai_ok',
-    };
-  }
-
-  private async generateStructuredProposalWithOpenAi(
-    text: string,
-    apiKey: string,
-    context?: {
-      learningPrompts?: string;
-    },
-  ) {
-    const model = this.configService.get<string>('OPENAI_AI_ASSISTANT_MODEL') || 'gpt-4.1-mini';
-    const response = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        input: [
-          {
-            role: 'system',
-            content: [
-              {
-                type: 'input_text',
-                text: `Genera una propuesta técnica estructurada en JSON para servicios eléctricos. No devuelvas texto libre.${context?.learningPrompts ? `\n\nPrompts de aprendizaje activos:\n${context.learningPrompts}` : ''}`,
-              },
-            ],
-          },
-          {
-            role: 'user',
-            content: [{ type: 'input_text', text }],
-          },
-        ],
-        text: {
-          format: {
-            type: 'json_schema',
-            name: 'structured_quote',
-            strict: true,
-            schema: {
-              type: 'object',
-              additionalProperties: false,
-              properties: {
-                servicios_recomendados: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    additionalProperties: false,
-                    properties: {
-                      servicio: { type: 'string' },
-                      tareas: { type: 'array', items: { type: 'string' } },
-                      duracion_horas: { type: 'number' },
-                    },
-                    required: ['servicio', 'tareas', 'duracion_horas'],
-                  },
-                },
-                costo_estimado: {
-                  type: 'object',
-                  additionalProperties: false,
-                  properties: {
-                    materiales: { type: 'number' },
-                    mano_obra: { type: 'number' },
-                    total: { type: 'number' },
-                    moneda: { type: 'string' },
-                  },
-                  required: ['materiales', 'mano_obra', 'total', 'moneda'],
-                },
-                notas: { type: 'string' },
-              },
-              required: ['servicios_recomendados', 'costo_estimado', 'notas'],
-            },
-          },
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`OpenAI structured failed: ${response.status} ${await response.text()}`);
-    }
-
-    const payload = (await response.json()) as { output_text?: string };
-    return {
-      engine: 'openai' as const,
-      ai_status: 'openai_ok' as const,
-      proposal: JSON.parse(payload.output_text || '{}') as Record<string, unknown>,
-    };
   }
 
   private generateStructuredProposalWithRules(text: string) {

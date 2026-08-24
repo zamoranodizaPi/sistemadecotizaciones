@@ -1772,6 +1772,10 @@ export class QuotationsService {
 
   private async recordQuotationLearning(quotation: QuotationWithRelations) {
     try {
+      const specialConsiderations = await this.prisma.quotationSpecialConsideration.findMany({
+        where: { quotationId: quotation.id },
+      });
+
       const inputText = this.buildLearningInputText(quotation);
       if (!inputText) {
         await this.appendQuotationLearningLog(
@@ -1780,7 +1784,7 @@ export class QuotationsService {
             inputText: '',
             category: quotation.serviceType || null,
             service: quotation.title,
-            variables: this.buildLearningVariables(quotation, 0),
+            variables: this.buildLearningVariables(quotation, 0, specialConsiderations),
             suggestedServices: [],
             suggestedWorkItems: [],
             confidence: 0,
@@ -1799,7 +1803,7 @@ export class QuotationsService {
             inputText,
             category: quotation.serviceType || null,
             service: quotation.title,
-            variables: this.buildLearningVariables(quotation, 0),
+            variables: this.buildLearningVariables(quotation, 0, specialConsiderations),
             suggestedServices: [],
             suggestedWorkItems: [],
             confidence: 0.95,
@@ -1810,12 +1814,15 @@ export class QuotationsService {
         return;
       }
 
-      const suggestedWorkItems = this.extractWorkItemsFromSections(quotation.commercialSections);
+      const suggestedWorkItems = [
+        ...this.extractWorkItemsFromSections(quotation.commercialSections),
+        ...this.buildTravelWorkItems(specialConsiderations),
+      ];
       const learningPayload = {
         inputText,
         category: quotation.serviceType || null,
         service: quotation.title,
-        variables: this.buildLearningVariables(quotation, suggestedWorkItems.length),
+        variables: this.buildLearningVariables(quotation, suggestedWorkItems.length, specialConsiderations),
         suggestedServices,
         suggestedWorkItems,
         confidence: 0.95,
@@ -1826,6 +1833,17 @@ export class QuotationsService {
     } catch (error) {
       console.error('recordQuotationLearning failed:', error);
     }
+  }
+
+  /** Un ítem sintético de trabajo por cada viático, para que el motor de
+   * ranking (que ya trata suggestedWorkItems de forma genérica) empiece a
+   * sugerir viáticos la próxima vez sin tocar su lógica. */
+  private buildTravelWorkItems(
+    specialConsiderations: Array<{ type: SpecialConsiderationType; location: string | null }>,
+  ) {
+    return specialConsiderations
+      .filter((item) => item.type === SpecialConsiderationType.TRAVEL && item.location?.trim())
+      .map((item) => `Viáticos: ${item.location}`);
   }
 
   private buildLearningInputText(quotation: QuotationWithRelations) {
@@ -1840,7 +1858,22 @@ export class QuotationsService {
     return segments.filter(Boolean).join(' · ').trim();
   }
 
-  private buildLearningVariables(quotation: QuotationWithRelations, workItemsCount: number) {
+  private buildLearningVariables(
+    quotation: QuotationWithRelations,
+    workItemsCount: number,
+    specialConsiderations: Array<{
+      type: SpecialConsiderationType;
+      location: string | null;
+      percentage: Prisma.Decimal | null;
+    }> = [],
+  ) {
+    const travelConsiderations = specialConsiderations.filter(
+      (item) => item.type === SpecialConsiderationType.TRAVEL && item.location?.trim(),
+    );
+    const percentageConsiderations = specialConsiderations.filter(
+      (item) => item.type === SpecialConsiderationType.PERCENTAGE && item.percentage !== null,
+    );
+
     return {
       cliente: quotation.client?.legalName || 'Cliente',
       servicio: quotation.serviceType || quotation.title,
@@ -1849,6 +1882,11 @@ export class QuotationsService {
       subtotal: Number(quotation.subtotal),
       total: Number(quotation.total),
       currency: quotation.currency,
+      viaticos: travelConsiderations.length ? 'si' : 'no',
+      viaticos_ubicaciones: travelConsiderations.map((item) => item.location).join(', '),
+      cargos_adicionales_pct: percentageConsiderations
+        .map((item) => String(item.percentage))
+        .join(', '),
     };
   }
 

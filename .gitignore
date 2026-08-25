@@ -1,6 +1,7 @@
 .next
 node_modules
 datosEntrenamiento/
+backups/
 dist
 .turbo
 .env
